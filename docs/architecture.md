@@ -186,11 +186,15 @@ Created by `gt rig add <name> <git-url>`:
 ```
 gastown/                           # Rig = container (NOT a git clone)
 ├── config.json                    # Rig configuration (git_url, beads prefix)
-├── .beads/ → refinery/rig/.beads  # Symlink to canonical beads in refinery
+├── .beads/ → mayor/rig/.beads     # Symlink to canonical beads in Mayor
 │
-├── refinery/                      # Refinery agent
-│   ├── rig/                       # Authoritative "main" clone
+├── mayor/                         # Mayor's per-rig presence
+│   ├── rig/                       # CANONICAL clone (beads authority)
 │   │   └── .beads/                # Canonical rig beads (prefix: gt-, etc.)
+│   └── state.json
+│
+├── refinery/                      # Refinery agent (merge queue processor)
+│   ├── rig/                       # Refinery's clone (for merge operations)
 │   └── state.json
 │
 ├── witness/                       # Witness agent (per-rig pit boss)
@@ -200,15 +204,15 @@ gastown/                           # Rig = container (NOT a git clone)
 │   └── <name>/                    # Workspace (full git clone)
 │
 └── polecats/                      # Worker directories (git worktrees)
-    ├── Nux/                       # Worktree from refinery (faster than clone)
-    └── Toast/                     # Worktree from refinery
+    ├── Nux/                       # Worktree from Mayor's clone
+    └── Toast/                     # Worktree from Mayor's clone
 ```
 
 **Beads architecture:**
-- Refinery's clone holds the canonical `.beads/` for the rig
-- Rig root symlinks `.beads/` → `refinery/rig/.beads`
-- All agents (crew, polecats) inherit beads via parent directory lookup
-- Polecats are git worktrees, not full clones (much faster)
+- Mayor's clone holds the canonical `.beads/` for the rig
+- Rig root symlinks `.beads/` → `mayor/rig/.beads`
+- All agents (crew, polecats, refinery) inherit beads via parent lookup
+- Polecats are git worktrees from Mayor's clone (much faster than full clones)
 
 **Key points:**
 - The rig root has no `.git/` - it's not a repository
@@ -271,12 +275,18 @@ For reference without mermaid rendering:
 │
 ├── gastown/                             # RIG (container, NOT a git clone)
 │   ├── config.json                      # Rig configuration
-│   ├── .beads/ → refinery/rig/.beads    # Symlink to canonical beads
+│   ├── .beads/ → mayor/rig/.beads       # Symlink to Mayor's canonical beads
 │   │
-│   ├── refinery/                        # Refinery agent
-│   │   ├── rig/                         # Canonical "main" clone
+│   ├── mayor/                           # Mayor's per-rig presence
+│   │   ├── rig/                         # CANONICAL clone (beads + worktree base)
 │   │   │   ├── .git/
 │   │   │   ├── .beads/                  # CANONICAL rig beads (gt-* prefix)
+│   │   │   └── <project files>
+│   │   └── state.json
+│   │
+│   ├── refinery/                        # Refinery agent (merge queue)
+│   │   ├── rig/                         # Refinery's clone (for merges)
+│   │   │   ├── .git/
 │   │   │   └── <project files>
 │   │   └── state.json
 │   │
@@ -289,9 +299,9 @@ For reference without mermaid rendering:
 │   │       └── <project files>
 │   │
 │   ├── polecats/                        # Worker directories (worktrees)
-│   │   ├── Nux/                         # Git worktree from refinery
+│   │   ├── Nux/                         # Git worktree from Mayor's clone
 │   │   │   └── <project files>          # (inherits beads from rig)
-│   │   └── Toast/                       # Git worktree from refinery
+│   │   └── Toast/                       # Git worktree from Mayor's clone
 │   │
 │   └── plugins/                         # Optional plugins
 │       └── merge-oracle/
@@ -300,18 +310,19 @@ For reference without mermaid rendering:
 │
 └── wyvern/                              # Another rig (same structure)
     ├── config.json
-    ├── .beads/ → refinery/rig/.beads
-    ├── polecats/
+    ├── .beads/ → mayor/rig/.beads
+    ├── mayor/
     ├── refinery/
     ├── witness/
-    └── crew/
+    ├── crew/
+    └── polecats/
 ```
 
 **Key changes from earlier design:**
 - Town beads (`gm-*`) hold Mayor mail instead of JSONL files
-- Rig `.beads/` symlinks to refinery's canonical beads
-- Polecats use git worktrees (not full clones) for speed
-- No `mayor/rig/` in each rig (Mayor works from town level)
+- Mayor has per-rig clone that's canonical for beads and worktrees
+- Rig `.beads/` symlinks to Mayor's canonical beads
+- Polecats are git worktrees from Mayor's clone (fast)
 
 ### Why Decentralized?
 

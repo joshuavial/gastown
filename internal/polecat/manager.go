@@ -65,18 +65,18 @@ func (m *Manager) Add(name string) (*Polecat, error) {
 		return nil, fmt.Errorf("creating polecats dir: %w", err)
 	}
 
-	// Use refinery clone as the base for worktrees
-	refineryPath := filepath.Join(m.rig.Path, "refinery", "rig")
-	refineryGit := git.NewGit(refineryPath)
+	// Use Mayor's clone as the base for worktrees (Mayor is canonical for the rig)
+	mayorPath := filepath.Join(m.rig.Path, "mayor", "rig")
+	mayorGit := git.NewGit(mayorPath)
 
-	// Verify refinery clone exists
-	if _, err := os.Stat(refineryPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("refinery clone not found at %s (run 'gt rig add' to set up rig structure)", refineryPath)
+	// Verify Mayor's clone exists
+	if _, err := os.Stat(mayorPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("mayor clone not found at %s (run 'gt rig add' to set up rig structure)", mayorPath)
 	}
 
 	// Create worktree with new branch
 	// git worktree add -b polecat/<name> <path>
-	if err := refineryGit.WorktreeAdd(polecatPath, branchName); err != nil {
+	if err := mayorGit.WorktreeAdd(polecatPath, branchName); err != nil {
 		return nil, fmt.Errorf("creating worktree: %w", err)
 	}
 
@@ -95,7 +95,7 @@ func (m *Manager) Add(name string) (*Polecat, error) {
 	// Save state
 	if err := m.saveState(polecat); err != nil {
 		// Clean up worktree on failure
-		refineryGit.WorktreeRemove(polecatPath, true)
+		mayorGit.WorktreeRemove(polecatPath, true)
 		return nil, fmt.Errorf("saving state: %w", err)
 	}
 
@@ -120,12 +120,12 @@ func (m *Manager) Remove(name string, force bool) error {
 		}
 	}
 
-	// Use refinery to remove the worktree properly
-	refineryPath := filepath.Join(m.rig.Path, "refinery", "rig")
-	refineryGit := git.NewGit(refineryPath)
+	// Use Mayor's clone to remove the worktree properly
+	mayorPath := filepath.Join(m.rig.Path, "mayor", "rig")
+	mayorGit := git.NewGit(mayorPath)
 
 	// Try to remove as a worktree first (use force flag for worktree removal too)
-	if err := refineryGit.WorktreeRemove(polecatPath, force); err != nil {
+	if err := mayorGit.WorktreeRemove(polecatPath, force); err != nil {
 		// Fall back to direct removal if worktree removal fails
 		// (e.g., if this is an old-style clone, not a worktree)
 		if removeErr := os.RemoveAll(polecatPath); removeErr != nil {
@@ -134,7 +134,7 @@ func (m *Manager) Remove(name string, force bool) error {
 	}
 
 	// Prune any stale worktree entries
-	refineryGit.WorktreePrune()
+	mayorGit.WorktreePrune()
 
 	return nil
 }
