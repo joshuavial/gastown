@@ -470,3 +470,58 @@ func (g *Git) WorktreeList() ([]Worktree, error) {
 
 	return worktrees, nil
 }
+
+// BranchCreatedDate returns the date when a branch was created.
+// This uses the committer date of the first commit on the branch.
+// Returns date in YYYY-MM-DD format.
+func (g *Git) BranchCreatedDate(branch string) (string, error) {
+	// Get the date of the first commit on the branch that's not on main
+	// Use merge-base to find where the branch diverged from main
+	mergeBase, err := g.run("merge-base", "main", branch)
+	if err != nil {
+		// If merge-base fails, fall back to the branch tip's date
+		out, err := g.run("log", "-1", "--format=%cs", branch)
+		if err != nil {
+			return "", err
+		}
+		return out, nil
+	}
+
+	// Get the first commit after the merge base on this branch
+	out, err := g.run("log", "--format=%cs", "--reverse", mergeBase+".."+branch)
+	if err != nil {
+		return "", err
+	}
+
+	// Get the first line (first commit's date)
+	lines := strings.Split(out, "\n")
+	if len(lines) > 0 && lines[0] != "" {
+		return lines[0], nil
+	}
+
+	// If no commits after merge-base, the branch points to merge-base
+	// Return the merge-base commit date
+	out, err = g.run("log", "-1", "--format=%cs", mergeBase)
+	if err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+// CommitsAhead returns the number of commits that branch has ahead of base.
+// For example, CommitsAhead("main", "feature") returns how many commits
+// are on feature that are not on main.
+func (g *Git) CommitsAhead(base, branch string) (int, error) {
+	out, err := g.run("rev-list", "--count", base+".."+branch)
+	if err != nil {
+		return 0, err
+	}
+
+	var count int
+	_, err = fmt.Sscanf(out, "%d", &count)
+	if err != nil {
+		return 0, fmt.Errorf("parsing commit count: %w", err)
+	}
+
+	return count, nil
+}

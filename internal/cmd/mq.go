@@ -49,6 +49,9 @@ var (
 	mqIntegrationLandForce     bool
 	mqIntegrationLandSkipTests bool
 	mqIntegrationLandDryRun    bool
+
+	// Integration status flags
+	mqIntegrationStatusJSON bool
 )
 
 var mqCmd = &cobra.Command{
@@ -169,7 +172,7 @@ branch is landed to main as a single atomic unit.
 Commands:
   create  Create an integration branch for an epic
   land    Merge integration branch to main
-  status  Show integration branch status (not yet implemented)`,
+  status  Show integration branch status`,
 }
 
 var mqIntegrationCreateCmd = &cobra.Command{
@@ -223,6 +226,23 @@ Examples:
 	RunE: runMqIntegrationLand,
 }
 
+var mqIntegrationStatusCmd = &cobra.Command{
+	Use:   "status <epic-id>",
+	Short: "Show integration branch status for an epic",
+	Long: `Display the status of an integration branch.
+
+Shows:
+  - Integration branch name and creation date
+  - Number of commits ahead of main
+  - Merged MRs (closed, targeting integration branch)
+  - Pending MRs (open, targeting integration branch)
+
+Example:
+  gt mq integration status gt-auth-epic`,
+	Args: cobra.ExactArgs(1),
+	RunE: runMqIntegrationStatus,
+}
+
 func init() {
 	// Submit flags
 	mqSubmitCmd.Flags().StringVar(&mqSubmitBranch, "branch", "", "Source branch (default: current branch)")
@@ -258,11 +278,15 @@ func init() {
 	// Integration branch subcommands
 	mqIntegrationCmd.AddCommand(mqIntegrationCreateCmd)
 
-	// Integration land flags
+// Integration land flags
 	mqIntegrationLandCmd.Flags().BoolVar(&mqIntegrationLandForce, "force", false, "Land even if some MRs still open")
 	mqIntegrationLandCmd.Flags().BoolVar(&mqIntegrationLandSkipTests, "skip-tests", false, "Skip test run")
 	mqIntegrationLandCmd.Flags().BoolVar(&mqIntegrationLandDryRun, "dry-run", false, "Preview only, make no changes")
 	mqIntegrationCmd.AddCommand(mqIntegrationLandCmd)
+
+	// Integration status flags
+	mqIntegrationStatusCmd.Flags().BoolVar(&mqIntegrationStatusJSON, "json", false, "Output as JSON")
+	mqIntegrationCmd.AddCommand(mqIntegrationStatusCmd)
 
 	mqCmd.AddCommand(mqIntegrationCmd)
 
@@ -1535,4 +1559,178 @@ func detectIntegrationBranch(bd *beads.Beads, g *git.Git, issueID string) (strin
 	}
 
 	return "", nil // No integration branch found
+}
+
+// IntegrationStatusOutput is the JSON output structure for integration status.
+type IntegrationStatusOutput struct {
+	Epic         string                        `json:"epic"`
+	Branch       string                        `json:"branch"`
+	Created      string                        `json:"created,omitempty"`
+	AheadOfMain  int                           `json:"ahead_of_main"`
+	MergedMRs    []IntegrationStatusMRSummary  `json:"merged_mrs"`
+	PendingMRs   []IntegrationStatusMRSummary  `json:"pending_mrs"`
+}
+
+// IntegrationStatusMRSummary represents a merge request in the integration status output.
+type IntegrationStatusMRSummary struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Status string `json:"status,omitempty"`
+}
+
+// runMqIntegrationStatus shows the status of an integration branch for an epic.
+func runMqIntegrationStatus(cmd *cobra.Command, args []string) error {
+	epicID := args[0]
+
+	// Find workspace
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+
+	// Find current rig
+	_, r, err := findCurrentRig(townRoot)
+	if err != nil {
+		return err
+	}
+
+	// Initialize beads for the rig
+	bd := beads.New(r.Path)
+
+	// Build integration branch name
+	branchName := "integration/" + epicID
+
+	// Initialize git for the rig
+	g := git.NewGit(r.Path)
+
+	// Fetch from origin to ensure we have latest refs
+	if err := g.Fetch("origin"); err != nil {
+		// Non-fatal, continue with local data
+	}
+
+	// Check if integration branch exists (locally or remotely)
+	localExists, _ := g.BranchExists(branchName)
+	remoteExists, _ := g.RemoteBranchExists("origin", branchName)
+
+	if !localExists && !remoteExists {
+		return fmt.Errorf("integration branch '%s' does not exist", branchName)
+	}
+
+	// Determine which ref to use for comparison
+	ref := branchName
+	if !localExists && remoteExists {
+		ref = "origin/" + branchName
+	}
+
+	// Get branch creation date
+	createdDate, err := g.BranchCreatedDate(ref)
+	if err != nil {
+		createdDate = "" // Non-fatal
+	}
+
+	// Get commits ahead of main
+	aheadCount, err := g.CommitsAhead("main", ref)
+	if err != nil {
+		aheadCount = 0 // Non-fatal
+	}
+
+	// Query for MRs targeting this integration branch
+	targetBranch := "integration/" + epicID
+
+	// Get all merge-request issues
+	allMRs, err := bd.List(beads.ListOptions{
+		Type:   "merge-request",
+		Status: "",  // all statuses
+	})
+	if err != nil {
+		return fmt.Errorf("querying merge requests: %w", err)
+	}
+
+	// Filter by target branch and separate into merged/pending
+	var mergedMRs, pendingMRs []*beads.Issue
+	for _, mr := range allMRs {
+		fields := beads.ParseMRFields(mr)
+		if fields == nil || fields.Target != targetBranch {
+			continue
+		}
+
+		if mr.Status == "closed" {
+			mergedMRs = append(mergedMRs, mr)
+		} else {
+			pendingMRs = append(pendingMRs, mr)
+		}
+	}
+
+	// Build output structure
+	output := IntegrationStatusOutput{
+		Epic:        epicID,
+		Branch:      branchName,
+		Created:     createdDate,
+		AheadOfMain: aheadCount,
+		MergedMRs:   make([]IntegrationStatusMRSummary, 0, len(mergedMRs)),
+		PendingMRs:  make([]IntegrationStatusMRSummary, 0, len(pendingMRs)),
+	}
+
+	for _, mr := range mergedMRs {
+		// Extract the title without "Merge: " prefix for cleaner display
+		title := strings.TrimPrefix(mr.Title, "Merge: ")
+		output.MergedMRs = append(output.MergedMRs, IntegrationStatusMRSummary{
+			ID:    mr.ID,
+			Title: title,
+		})
+	}
+
+	for _, mr := range pendingMRs {
+		title := strings.TrimPrefix(mr.Title, "Merge: ")
+		output.PendingMRs = append(output.PendingMRs, IntegrationStatusMRSummary{
+			ID:     mr.ID,
+			Title:  title,
+			Status: mr.Status,
+		})
+	}
+
+	// JSON output
+	if mqIntegrationStatusJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(output)
+	}
+
+	// Human-readable output
+	return printIntegrationStatus(&output)
+}
+
+// printIntegrationStatus prints the integration status in human-readable format.
+func printIntegrationStatus(output *IntegrationStatusOutput) error {
+	fmt.Printf("Integration: %s\n", style.Bold.Render(output.Branch))
+	if output.Created != "" {
+		fmt.Printf("Created: %s\n", output.Created)
+	}
+	fmt.Printf("Ahead of main: %d commits\n", output.AheadOfMain)
+
+	// Merged MRs
+	fmt.Printf("\nMerged MRs (%d):\n", len(output.MergedMRs))
+	if len(output.MergedMRs) == 0 {
+		fmt.Printf("  %s\n", style.Dim.Render("(none)"))
+	} else {
+		for _, mr := range output.MergedMRs {
+			fmt.Printf("  %-12s  %s\n", mr.ID, mr.Title)
+		}
+	}
+
+	// Pending MRs
+	fmt.Printf("\nPending MRs (%d):\n", len(output.PendingMRs))
+	if len(output.PendingMRs) == 0 {
+		fmt.Printf("  %s\n", style.Dim.Render("(none)"))
+	} else {
+		for _, mr := range output.PendingMRs {
+			statusInfo := ""
+			if mr.Status != "" && mr.Status != "open" {
+				statusInfo = fmt.Sprintf(" (%s)", mr.Status)
+			}
+			fmt.Printf("  %-12s  %s%s\n", mr.ID, mr.Title, style.Dim.Render(statusInfo))
+		}
+	}
+
+	return nil
 }
