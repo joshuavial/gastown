@@ -158,7 +158,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 	if len(args) > 2 {
 		lastArg := args[len(args)-1]
 		if rigName, isRig := IsRigName(lastArg); isRig {
-			return runBatchSling(args[:len(args)-1], rigName, townBeadsDir)
+			return runBatchSling(args[:len(args)-1], rigName, townRoot, townBeadsDir)
 		}
 	}
 
@@ -187,7 +187,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 		formulaName = args[0]
 		beadID = slingOnTarget
 		// Verify both exist
-		if err := verifyBeadExists(beadID); err != nil {
+		if err := verifyBeadExists(beadID, townRoot); err != nil {
 			return err
 		}
 		if err := verifyFormulaExists(formulaName); err != nil {
@@ -198,7 +198,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 		firstArg := args[0]
 
 		// Try as bead first
-		if err := verifyBeadExists(firstArg); err == nil {
+		if err := verifyBeadExists(firstArg, townRoot); err == nil {
 			// It's a bead
 			beadID = firstArg
 		} else {
@@ -313,7 +313,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check if bead is already pinned (guard against accidental re-sling)
-	info, err := getBeadInfo(beadID)
+	info, err := getBeadInfo(beadID, townRoot)
 	if err != nil {
 		return fmt.Errorf("checking bead status: %w", err)
 	}
@@ -592,8 +592,10 @@ func sessionToAgentID(sessionName string) string {
 }
 
 // verifyBeadExists checks that the bead exists using bd show.
-func verifyBeadExists(beadID string) error {
+// townRoot is required for prefix-based routing to work (bd needs to find routes.jsonl).
+func verifyBeadExists(beadID, townRoot string) error {
 	cmd := exec.Command("bd", "show", beadID, "--json")
+	cmd.Dir = townRoot // Required for prefix-based routing
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("bead '%s' not found (bd show failed)", beadID)
 	}
@@ -608,8 +610,10 @@ type beadInfo struct {
 }
 
 // getBeadInfo returns status and assignee for a bead.
-func getBeadInfo(beadID string) (*beadInfo, error) {
+// townRoot is required for prefix-based routing to work (bd needs to find routes.jsonl).
+func getBeadInfo(beadID, townRoot string) (*beadInfo, error) {
 	cmd := exec.Command("bd", "show", beadID, "--json")
+	cmd.Dir = townRoot // Required for prefix-based routing
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("bead '%s' not found", beadID)
@@ -1255,10 +1259,10 @@ func createAutoConvoy(beadID, beadTitle string) (string, error) {
 
 // runBatchSling handles slinging multiple beads to a rig.
 // Each bead gets its own freshly spawned polecat.
-func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error {
+func runBatchSling(beadIDs []string, rigName string, townRoot, townBeadsDir string) error {
 	// Validate all beads exist before spawning any polecats
 	for _, beadID := range beadIDs {
-		if err := verifyBeadExists(beadID); err != nil {
+		if err := verifyBeadExists(beadID, townRoot); err != nil {
 			return fmt.Errorf("bead '%s' not found", beadID)
 		}
 	}
@@ -1290,7 +1294,7 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 		fmt.Printf("\n[%d/%d] Slinging %s...\n", i+1, len(beadIDs), beadID)
 
 		// Check bead status
-		info, err := getBeadInfo(beadID)
+		info, err := getBeadInfo(beadID, townRoot)
 		if err != nil {
 			results = append(results, slingResult{beadID: beadID, success: false, errMsg: err.Error()})
 			fmt.Printf("  %s Could not get bead info: %v\n", style.Dim.Render("✗"), err)

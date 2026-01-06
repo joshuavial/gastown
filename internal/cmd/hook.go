@@ -11,6 +11,7 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/style"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 var hookCmd = &cobra.Command{
@@ -122,8 +123,14 @@ func runHook(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("polecats cannot hook work (use gt done for handoff)")
 	}
 
+	// Get town root for prefix-based routing
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil {
+		return fmt.Errorf("finding town root: %w", err)
+	}
+
 	// Verify the bead exists
-	if err := verifyBeadExists(beadID); err != nil {
+	if err := verifyBeadExists(beadID, townRoot); err != nil {
 		return err
 	}
 
