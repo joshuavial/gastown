@@ -166,20 +166,34 @@ func SetupRedirect(townRoot, worktreePath string) error {
 	// e.g., crew/<name> (depth 2) -> ../../.beads
 	//       refinery/rig (depth 2) -> ../../.beads
 	depth := len(parts) - 1 // subtract 1 for rig name itself
-	redirectPath := strings.Repeat("../", depth) + ".beads"
 
-	// Check if rig-level beads has a redirect (tracked beads case).
-	// If so, redirect directly to the final destination to avoid chains.
-	// The bd CLI doesn't support redirect chains, so we must skip intermediate hops.
+	// Determine where the worktree should redirect.
+	//
+	// Prefer redirecting directly to the canonical beads location (mayor/rig/.beads)
+	// to avoid redirect chains (bd CLI doesn't support them).
+	//
+	// Normal path:
+	//   rig/.beads/redirect contains "mayor/rig/.beads"
+	//
+	// Recovery path:
+	//   rig/.beads/redirect is missing, but rig/mayor/rig/.beads exists, so we still
+	//   redirect directly to the canonical location.
+	target := ".beads"
 	rigRedirectPath := filepath.Join(rigBeadsPath, "redirect")
 	if data, err := os.ReadFile(rigRedirectPath); err == nil {
-		rigRedirectTarget := strings.TrimSpace(string(data))
-		if rigRedirectTarget != "" {
-			// Rig has redirect (e.g., "mayor/rig/.beads" for tracked beads).
-			// Redirect worktree directly to the final destination.
-			redirectPath = strings.Repeat("../", depth) + rigRedirectTarget
+		if rigRedirectTarget := strings.TrimSpace(string(data)); rigRedirectTarget != "" {
+			target = rigRedirectTarget
+		}
+	} else {
+		// If tracked beads exist but the rig-level redirect is missing, still point
+		// worktrees directly at the canonical beads dir.
+		mayorRigBeadsPath := filepath.Join(rigRoot, "mayor", "rig", ".beads")
+		if _, err := os.Stat(mayorRigBeadsPath); err == nil {
+			target = "mayor/rig/.beads"
 		}
 	}
+
+	redirectPath := strings.Repeat("../", depth) + target
 
 	// Create redirect file
 	redirectFile := filepath.Join(worktreeBeadsDir, "redirect")

@@ -1586,6 +1586,46 @@ func TestSetupRedirect(t *testing.T) {
 		}
 	})
 
+	t.Run("worktree with tracked beads but missing rig redirect", func(t *testing.T) {
+		// Setup: mayor/rig/.beads exists (tracked), but rig/.beads/redirect is missing.
+		// Worktrees must still redirect directly to mayor/rig/.beads (no chain).
+		townRoot := t.TempDir()
+		rigRoot := filepath.Join(townRoot, "testrig")
+		rigBeads := filepath.Join(rigRoot, ".beads")
+		mayorRigBeads := filepath.Join(rigRoot, "mayor", "rig", ".beads")
+		crewPath := filepath.Join(rigRoot, "crew", "max")
+
+		if err := os.MkdirAll(mayorRigBeads, 0755); err != nil {
+			t.Fatalf("mkdir mayor/rig beads: %v", err)
+		}
+		if err := os.MkdirAll(rigBeads, 0755); err != nil {
+			t.Fatalf("mkdir rig beads: %v", err)
+		}
+		if err := os.MkdirAll(crewPath, 0755); err != nil {
+			t.Fatalf("mkdir crew: %v", err)
+		}
+
+		if err := SetupRedirect(townRoot, crewPath); err != nil {
+			t.Fatalf("SetupRedirect failed: %v", err)
+		}
+
+		redirectPath := filepath.Join(crewPath, ".beads", "redirect")
+		content, err := os.ReadFile(redirectPath)
+		if err != nil {
+			t.Fatalf("read redirect: %v", err)
+		}
+
+		want := "../../mayor/rig/.beads\n"
+		if string(content) != want {
+			t.Errorf("redirect content = %q, want %q", string(content), want)
+		}
+
+		resolved := ResolveBeadsDir(crewPath)
+		if resolved != mayorRigBeads {
+			t.Errorf("resolved = %q, want %q", resolved, mayorRigBeads)
+		}
+	})
+
 	t.Run("polecat worktree", func(t *testing.T) {
 		townRoot := t.TempDir()
 		rigRoot := filepath.Join(townRoot, "testrig")
