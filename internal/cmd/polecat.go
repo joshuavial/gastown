@@ -79,7 +79,7 @@ var polecatRemoveCmd = &cobra.Command{
 
 Fails if session is running (stop first).
 Warns if uncommitted changes exist.
-Use --force to bypass checks.
+Use --force to bypass checks (including stashes and unpushed commits).
 
 Examples:
   gt polecat remove greenplace/Toast
@@ -536,8 +536,9 @@ func runPolecatRemove(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Removing polecat %s/%s...\n", p.rigName, p.polecatName)
 
 		if err := p.mgr.Remove(p.polecatName, polecatForce); err != nil {
-			if errors.Is(err, polecat.ErrHasChanges) {
-				removeErrors = append(removeErrors, fmt.Sprintf("%s/%s: has uncommitted changes (use --force)", p.rigName, p.polecatName))
+			var uncommitted *polecat.UncommittedWorkError
+			if errors.As(err, &uncommitted) {
+				removeErrors = append(removeErrors, fmt.Sprintf("%s/%s: %s (use --force)", p.rigName, p.polecatName, uncommitted.Error()))
 			} else {
 				removeErrors = append(removeErrors, fmt.Sprintf("%s/%s: %v", p.rigName, p.polecatName, err))
 			}

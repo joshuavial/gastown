@@ -739,6 +739,32 @@ func (g *Git) StashCount() (int, error) {
 	return count, nil
 }
 
+// StashList returns the raw "git stash list" lines (oldest-first as printed by git).
+func (g *Git) StashList() ([]string, error) {
+	out, err := g.run("stash", "list")
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(out) == "" {
+		return nil, nil
+	}
+	lines := strings.Split(out, "\n")
+	var result []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		result = append(result, line)
+	}
+	return result, nil
+}
+
+// StashPatch returns the patch for a stash reference (e.g., "stash@{0}").
+func (g *Git) StashPatch(ref string) (string, error) {
+	return g.run("stash", "show", "-p", ref)
+}
+
 // UnpushedCommits returns the number of commits that are not pushed to the remote.
 // It checks if the current branch has an upstream and counts commits ahead.
 // Returns 0 if there is no upstream configured.

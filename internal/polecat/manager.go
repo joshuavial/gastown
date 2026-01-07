@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
@@ -119,7 +121,7 @@ func (m *Manager) getCleanupStatusFromBead(name string) CleanupStatus {
 
 // checkCleanupStatus validates the cleanup status against removal safety rules.
 // Returns an error if removal should be blocked based on the status.
-// force=true: allow has_uncommitted, block has_stash and has_unpushed
+// force=true: bypass all non-clean statuses
 // force=false: block all non-clean statuses
 func (m *Manager) checkCleanupStatus(name string, status CleanupStatus, force bool) error {
 	// Clean status is always safe
@@ -127,8 +129,9 @@ func (m *Manager) checkCleanupStatus(name string, status CleanupStatus, force bo
 		return nil
 	}
 
-	// With force, uncommitted changes can be bypassed
-	if force && status.CanForceRemove() {
+	// With force, bypass all cleanup blockers. Stashes and unpushed commits live in the
+	// repo base (not the worktree dir), and worktree removal doesn't delete branch refs.
+	if force {
 		return nil
 	}
 
@@ -155,6 +158,41 @@ func (m *Manager) checkCleanupStatus(name string, status CleanupStatus, force bo
 			PolecatName: name,
 			Status:      &git.UncommittedWorkStatus{HasUncommittedChanges: true},
 		}
+	}
+}
+
+var stashRefRe = regexp.MustCompile(`^stash@\{\d+\}$`)
+
+func (m *Manager) backupStashesBeforeRemoval(polecatName, polecatPath string) {
+	polecatGit := git.NewGit(polecatPath)
+	lines, err := polecatGit.StashList()
+	if err != nil || len(lines) == 0 {
+		return
+	}
+
+	// Best-effort backup: stashes may be stored per-worktree and can be lost on removal.
+	backupDir := filepath.Join(m.rig.Path, ".beads", "stash-backups", time.Now().Format("20060102-150405"), polecatName)
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		return
+	}
+
+	_ = os.WriteFile(filepath.Join(backupDir, "stash.list.txt"), []byte(strings.Join(lines, "\n")+"\n"), 0644)
+
+	for _, line := range lines {
+		// "stash@{0}: message..." -> take token 0
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		ref := strings.TrimSuffix(fields[0], ":")
+		if !stashRefRe.MatchString(ref) {
+			continue
+		}
+		patch, err := polecatGit.StashPatch(ref)
+		if err != nil {
+			continue
+		}
+		_ = os.WriteFile(filepath.Join(backupDir, ref+".patch"), []byte(patch), 0644)
 	}
 }
 
@@ -285,14 +323,14 @@ func (m *Manager) AddWithOptions(name string, opts AddOptions) (*Polecat, error)
 }
 
 // Remove deletes a polecat worktree.
-// If force is true, removes even with uncommitted changes (but not stashes/unpushed).
+// If force is true, bypasses uncommitted-work checks (including stashes/unpushed).
 // Use nuclear=true to bypass ALL safety checks.
 func (m *Manager) Remove(name string, force bool) error {
 	return m.RemoveWithOptions(name, force, false)
 }
 
 // RemoveWithOptions deletes a polecat worktree with explicit control over safety checks.
-// force=true: bypass uncommitted changes check (legacy behavior)
+// force=true: bypass uncommitted-work checks (including stashes/unpushed)
 // nuclear=true: bypass ALL safety checks including stashes and unpushed commits
 //
 // ZFC #10: Uses cleanup_status from agent bead if available (polecat self-report),
@@ -303,6 +341,12 @@ func (m *Manager) RemoveWithOptions(name string, force, nuclear bool) error {
 	}
 
 	polecatPath := m.polecatDir(name)
+
+	// Best-effort: preserve stash patches when force-removing.
+	// Stashes can be per-worktree and may be lost when the worktree is removed.
+	if force && !nuclear {
+		m.backupStashesBeforeRemoval(name, polecatPath)
+	}
 
 	// Check for uncommitted work unless bypassed
 	if !nuclear {
@@ -320,13 +364,7 @@ func (m *Manager) RemoveWithOptions(name string, force, nuclear bool) error {
 			polecatGit := git.NewGit(polecatPath)
 			status, err := polecatGit.CheckUncommittedWork()
 			if err == nil && !status.Clean() {
-				// For backward compatibility: force only bypasses uncommitted changes, not stashes/unpushed
-				if force {
-					// Force mode: allow uncommitted changes but still block on stashes/unpushed
-					if status.StashCount > 0 || status.UnpushedCommits > 0 {
-						return &UncommittedWorkError{PolecatName: name, Status: status}
-					}
-				} else {
+				if !force {
 					return &UncommittedWorkError{PolecatName: name, Status: status}
 				}
 			}
