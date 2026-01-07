@@ -150,8 +150,8 @@ func runLiveCosts() error {
 		// Extract cost from content
 		cost := extractCost(content)
 
-		// Check if Claude is running
-		running := t.IsClaudeRunning(session)
+		// Check if an agent appears to be running
+		running := t.IsAgentRunning(session)
 
 		costs = append(costs, SessionCost{
 			Session: session,
@@ -428,7 +428,6 @@ func extractCost(content string) float64 {
 	return cost
 }
 
-
 func outputCostsJSON(output CostsOutput) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
@@ -679,7 +678,8 @@ func detectCurrentTmuxSession() string {
 
 	session := strings.TrimSpace(string(output))
 	// Only return if it looks like a Gas Town session
-	if strings.HasPrefix(session, constants.SessionPrefix) {
+	// Accept both gt- (rig sessions) and hq- (town-level sessions like hq-mayor)
+	if strings.HasPrefix(session, constants.SessionPrefix) || strings.HasPrefix(session, constants.HQSessionPrefix) {
 		return session
 	}
 	return ""

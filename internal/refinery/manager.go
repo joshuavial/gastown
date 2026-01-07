@@ -14,19 +14,21 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/claude"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/mrqueue"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/util"
 )
 
 // Common errors
 var (
-	ErrNotRunning    = errors.New("refinery not running")
+	ErrNotRunning     = errors.New("refinery not running")
 	ErrAlreadyRunning = errors.New("refinery already running")
-	ErrNoQueue       = errors.New("no items in queue")
+	ErrNoQueue        = errors.New("no items in queue")
 )
 
 // Manager handles refinery lifecycle and queue operations.
@@ -136,7 +138,9 @@ func (m *Manager) Start(foreground bool) error {
 	running, _ := t.HasSession(sessionID)
 	if running {
 		// Session exists - check if Claude is actually running (healthy vs zombie)
-		if t.IsClaudeRunning(sessionID) {
+		townRoot := filepath.Dir(m.rig.Path)
+		agentCfg := config.ResolveAgentConfig(townRoot, m.rig.Path)
+		if t.IsAgentRunning(sessionID, config.ExpectedPaneCommands(agentCfg)...) {
 			// Healthy - Claude is running
 			return ErrAlreadyRunning
 		}
@@ -203,12 +207,37 @@ func (m *Manager) Start(foreground bool) error {
 	// NOTE: No gt prime injection needed - SessionStart hook handles it automatically
 	// Restarts are handled by daemon via LIFECYCLE mail, not shell loops
 	// Export GT_ROLE and BD_ACTOR in the command since tmux SetEnvironment only affects new panes
-	command := config.BuildAgentStartupCommand("refinery", bdActor, "", "")
+	command := config.BuildAgentStartupCommand("refinery", bdActor, m.rig.Path, "")
 	if err := t.SendKeys(sessionID, command); err != nil {
 		// Clean up the session on failure (best-effort cleanup)
 		_ = t.KillSession(sessionID)
 		return fmt.Errorf("starting Claude agent: %w", err)
 	}
+
+	// Wait for Claude to start and show its prompt (non-fatal)
+	// WaitForClaudeReady waits for "> " prompt, more reliable than just checking node is running
+	if err := t.WaitForClaudeReady(sessionID, constants.ClaudeStartTimeout); err != nil {
+		// Non-fatal - try to continue anyway
+	}
+
+	// Accept bypass permissions warning dialog if it appears.
+	_ = t.AcceptBypassPermissionsWarning(sessionID)
+
+	time.Sleep(constants.ShutdownNotifyDelay)
+
+	// Inject startup nudge for predecessor discovery via /resume
+	address := fmt.Sprintf("%s/refinery", m.rig.Name)
+	_ = session.StartupNudge(t, sessionID, session.StartupNudgeConfig{
+		Recipient: address,
+		Sender:    "deacon",
+		Topic:     "patrol",
+	}) // Non-fatal
+
+	// GUPP: Gas Town Universal Propulsion Principle
+	// Send the propulsion nudge to trigger autonomous patrol execution.
+	// Wait for beacon to be fully processed (needs to be separate prompt)
+	time.Sleep(2 * time.Second)
+	_ = t.NudgeSession(sessionID, session.PropulsionNudgeForRole("refinery", refineryRigDir)) // Non-fatal
 
 	return nil
 }
@@ -539,7 +568,6 @@ func (m *Manager) pushWithRetry(targetBranch string, config MergeConfig) error {
 	return fmt.Errorf("push failed after %d retries: %v", config.PushRetryCount, lastErr)
 }
 
-
 // formatAge formats a duration since the given time.
 func formatAge(t time.Time) string {
 	d := time.Since(t)
@@ -560,8 +588,8 @@ func formatAge(t time.Time) string {
 func (m *Manager) notifyWorkerConflict(mr *MergeRequest) {
 	router := mail.NewRouter(m.workDir)
 	msg := &mail.Message{
-		From: fmt.Sprintf("%s/refinery", m.rig.Name),
-		To:   fmt.Sprintf("%s/%s", m.rig.Name, mr.Worker),
+		From:    fmt.Sprintf("%s/refinery", m.rig.Name),
+		To:      fmt.Sprintf("%s/%s", m.rig.Name, mr.Worker),
 		Subject: "Merge conflict - rebase required",
 		Body: fmt.Sprintf(`Your branch %s has conflicts with %s.
 
@@ -581,8 +609,8 @@ Then the Refinery will retry the merge.`,
 func (m *Manager) notifyWorkerMerged(mr *MergeRequest) {
 	router := mail.NewRouter(m.workDir)
 	msg := &mail.Message{
-		From: fmt.Sprintf("%s/refinery", m.rig.Name),
-		To:   fmt.Sprintf("%s/%s", m.rig.Name, mr.Worker),
+		From:    fmt.Sprintf("%s/refinery", m.rig.Name),
+		To:      fmt.Sprintf("%s/%s", m.rig.Name, mr.Worker),
 		Subject: "Work merged successfully",
 		Body: fmt.Sprintf(`Your branch %s has been merged to %s.
 

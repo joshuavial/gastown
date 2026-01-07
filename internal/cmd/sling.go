@@ -104,6 +104,7 @@ var (
 	slingCreate   bool   // --create: create polecat if it doesn't exist
 	slingForce    bool   // --force: force spawn even if polecat has unread mail
 	slingAccount  string // --account: Claude Code account handle to use
+	slingAgent    string // --agent: override runtime agent for this sling/spawn
 	slingNoConvoy bool   // --no-convoy: skip auto-convoy creation
 )
 
@@ -120,6 +121,7 @@ func init() {
 	slingCmd.Flags().BoolVar(&slingCreate, "create", false, "Create polecat if it doesn't exist")
 	slingCmd.Flags().BoolVar(&slingForce, "force", false, "Force spawn even if polecat has unread mail")
 	slingCmd.Flags().StringVar(&slingAccount, "account", "", "Claude Code account handle to use")
+	slingCmd.Flags().StringVar(&slingAgent, "agent", "", "Override agent/runtime for this sling (e.g., claude, gemini, codex, or custom alias)")
 	slingCmd.Flags().BoolVar(&slingNoConvoy, "no-convoy", false, "Skip auto-convoy creation for single-issue sling")
 
 	rootCmd.AddCommand(slingCmd)
@@ -243,6 +245,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 					Account:  slingAccount,
 					Create:   slingCreate,
 					HookBead: beadID, // Set atomically at spawn time
+					Agent:    slingAgent,
 				}
 				spawnInfo, spawnErr := SpawnPolecatForSling(rigName, spawnOpts)
 				if spawnErr != nil {
@@ -444,13 +447,13 @@ func runSling(cmd *cobra.Command, args []string) error {
 	if targetPane == "" {
 		fmt.Printf("%s No pane to nudge (agent will discover work via gt prime)\n", style.Dim.Render("○"))
 	} else {
-		// Ensure Claude is ready before nudging (prevents race condition where
+		// Ensure agent is ready before nudging (prevents race condition where
 		// message arrives before Claude has fully started - see issue #115)
 		sessionName := getSessionFromPane(targetPane)
 		if sessionName != "" {
-			if err := ensureClaudeReady(sessionName); err != nil {
+			if err := ensureAgentReady(sessionName); err != nil {
 				// Non-fatal: warn and continue, agent will discover work via gt prime
-				fmt.Printf("%s Could not verify Claude ready: %v\n", style.Dim.Render("○"), err)
+				fmt.Printf("%s Could not verify agent ready: %v\n", style.Dim.Render("○"), err)
 			}
 		}
 
@@ -602,30 +605,32 @@ func getSessionFromPane(pane string) string {
 	return pane
 }
 
-// ensureClaudeReady waits for Claude to be ready before nudging an existing session.
-// Uses the same pragmatic approach as session.Start(): poll for node process,
-// accept bypass dialog if present, then wait for full initialization.
-// Returns early if Claude is already running and ready.
-func ensureClaudeReady(sessionName string) error {
+// ensureAgentReady waits for an agent to be ready before nudging an existing session.
+// Uses a pragmatic approach: wait for the pane to leave a shell, then (Claude-only)
+// accept the bypass permissions warning and give it a moment to finish initializing.
+func ensureAgentReady(sessionName string) error {
 	t := tmux.NewTmux()
 
-	// If Claude is already running, assume it's ready (session was started earlier)
-	if t.IsClaudeRunning(sessionName) {
+	// If an agent is already running, assume it's ready (session was started earlier)
+	if t.IsAgentRunning(sessionName) {
 		return nil
 	}
 
-	// Claude not running yet - wait for it to start (shell → node transition)
+	// Agent not running yet - wait for it to start (shell → program transition)
 	if err := t.WaitForCommand(sessionName, constants.SupportedShells, constants.ClaudeStartTimeout); err != nil {
-		return fmt.Errorf("waiting for Claude to start: %w", err)
+		return fmt.Errorf("waiting for agent to start: %w", err)
 	}
 
-	// Accept bypass permissions warning if present
-	_ = t.AcceptBypassPermissionsWarning(sessionName)
+	// Claude-only: accept bypass permissions warning if present
+	if t.IsClaudeRunning(sessionName) {
+		_ = t.AcceptBypassPermissionsWarning(sessionName)
 
-	// Wait for Claude to be fully ready at the prompt
-	// PRAGMATIC APPROACH: Use fixed delay rather than detection.
-	// Claude startup takes ~5-8 seconds on typical machines.
-	time.Sleep(8 * time.Second)
+		// PRAGMATIC APPROACH: fixed delay rather than prompt detection.
+		// Claude startup takes ~5-8 seconds on typical machines.
+		time.Sleep(8 * time.Second)
+	} else {
+		time.Sleep(1 * time.Second)
+	}
 
 	return nil
 }
@@ -849,6 +854,7 @@ func runSlingFormula(args []string) error {
 					Naked:   slingNaked,
 					Account: slingAccount,
 					Create:  slingCreate,
+					Agent:   slingAgent,
 				}
 				spawnInfo, spawnErr := SpawnPolecatForSling(rigName, spawnOpts)
 				if spawnErr != nil {
@@ -1027,13 +1033,13 @@ func updateAgentHookBead(agentID, beadID, workDir, townBeadsDir string) {
 	}
 
 	// Run from workDir WITHOUT BEADS_DIR to enable redirect-based routing.
-	// Update agent_state to "running" and set hook_bead to the slung work.
-	// For same-database beads, the hook slot is set via `bd slot set`.
+	// Set hook_bead to the slung work (gt-zecmc: removed agent_state update).
+	// Agent liveness is observable from tmux - no need to record it in bead.
 	// For cross-database scenarios, slot set may fail gracefully (warning only).
 	bd := beads.New(bdWorkDir)
-	if err := bd.UpdateAgentState(agentBeadID, "running", &beadID); err != nil {
+	if err := bd.SetHookBead(agentBeadID, beadID); err != nil {
 		// Log warning instead of silent ignore - helps debug cross-beads issues
-		fmt.Fprintf(os.Stderr, "Warning: couldn't update agent %s state: %v\n", agentBeadID, err)
+		fmt.Fprintf(os.Stderr, "Warning: couldn't set agent %s hook: %v\n", agentBeadID, err)
 		return
 	}
 }
@@ -1100,7 +1106,6 @@ func agentIDToBeadID(agentID, townRoot string) string {
 		return ""
 	}
 }
-
 
 // IsDogTarget checks if target is a dog target pattern.
 // Returns the dog name (or empty for pool dispatch) and true if it's a dog target.
@@ -1395,6 +1400,7 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 			Account:  slingAccount,
 			Create:   slingCreate,
 			HookBead: beadID, // Set atomically at spawn time
+			Agent:    slingAgent,
 		}
 		spawnInfo, err := SpawnPolecatForSling(rigName, spawnOpts)
 		if err != nil {

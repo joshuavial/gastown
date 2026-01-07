@@ -83,7 +83,7 @@ Git-backed issue tracking system that stores work state as structured data.
 
 - **Go 1.23+** - [go.dev/dl](https://go.dev/dl/)
 - **Git 2.25+** - for worktree support
-- **beads (bd)** - [github.com/steveyegge/beads](https://github.com/steveyegge/beads)
+- **beads (bd) 0.44.0+** - [github.com/steveyegge/beads](https://github.com/steveyegge/beads) (required for custom type support)
 - **tmux 3.0+** - recommended for full experience
 - **Claude Code CLI** - [claude.ai/code](https://claude.ai/code)
 
@@ -255,7 +255,9 @@ gt crew add <name> --rig <rig>  # Create crew workspace
 ```bash
 gt agents                   # List active agents
 gt sling <issue> <rig>      # Assign work to agent
+gt sling <issue> <rig> --agent codex    # Override runtime for this sling/spawn
 gt mayor attach             # Start Mayor session
+gt mayor start --agent gemini           # Run Mayor with a specific agent alias
 gt prime                    # Alternative to mayor attach
 ```
 
@@ -273,6 +275,7 @@ gt convoy add-issue <issue> # Add issue to convoy
 ```bash
 # Set custom agent command
 gt config agent set claude-glm "claude-glm --model glm-4"
+gt config agent set codex-low "codex --thinking low"
 
 # Set default agent
 gt config default-agent claude-glm
@@ -411,4 +414,4 @@ MIT License - see LICENSE file for details
 
 ---
 
-**Getting Started:** Run `gt install ~/gt --git && cd ~/gt && gt mayor attach` and tell the Mayor what you want to build!
+**Getting Started:** Run `gt install ~/gt --git && cd ~/gt && gt config agent list && gt mayor attach` (or `gt mayor attach --agent codex`) and tell the Mayor what you want to build!

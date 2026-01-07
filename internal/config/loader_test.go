@@ -931,6 +931,256 @@ func TestBuildCrewStartupCommand(t *testing.T) {
 	}
 }
 
+func TestResolveAgentConfigWithOverride(t *testing.T) {
+	townRoot := t.TempDir()
+	rigPath := filepath.Join(townRoot, "testrig")
+
+	// Town settings: default agent is gemini, plus a custom alias.
+	townSettings := NewTownSettings()
+	townSettings.DefaultAgent = "gemini"
+	townSettings.Agents["claude-haiku"] = &RuntimeConfig{
+		Command: "claude",
+		Args:    []string{"--model", "haiku", "--dangerously-skip-permissions"},
+	}
+	if err := SaveTownSettings(TownSettingsPath(townRoot), townSettings); err != nil {
+		t.Fatalf("SaveTownSettings: %v", err)
+	}
+
+	// Rig settings: prefer codex unless overridden.
+	rigSettings := NewRigSettings()
+	rigSettings.Agent = "codex"
+	if err := SaveRigSettings(RigSettingsPath(rigPath), rigSettings); err != nil {
+		t.Fatalf("SaveRigSettings: %v", err)
+	}
+
+	t.Run("no override uses rig agent", func(t *testing.T) {
+		rc, name, err := ResolveAgentConfigWithOverride(townRoot, rigPath, "")
+		if err != nil {
+			t.Fatalf("ResolveAgentConfigWithOverride: %v", err)
+		}
+		if name != "codex" {
+			t.Fatalf("name = %q, want %q", name, "codex")
+		}
+		if rc.Command != "codex" {
+			t.Fatalf("rc.Command = %q, want %q", rc.Command, "codex")
+		}
+	})
+
+	t.Run("override uses built-in preset", func(t *testing.T) {
+		rc, name, err := ResolveAgentConfigWithOverride(townRoot, rigPath, "gemini")
+		if err != nil {
+			t.Fatalf("ResolveAgentConfigWithOverride: %v", err)
+		}
+		if name != "gemini" {
+			t.Fatalf("name = %q, want %q", name, "gemini")
+		}
+		if rc.Command != "gemini" {
+			t.Fatalf("rc.Command = %q, want %q", rc.Command, "gemini")
+		}
+	})
+
+	t.Run("override uses custom agent alias", func(t *testing.T) {
+		rc, name, err := ResolveAgentConfigWithOverride(townRoot, rigPath, "claude-haiku")
+		if err != nil {
+			t.Fatalf("ResolveAgentConfigWithOverride: %v", err)
+		}
+		if name != "claude-haiku" {
+			t.Fatalf("name = %q, want %q", name, "claude-haiku")
+		}
+		if rc.Command != "claude" {
+			t.Fatalf("rc.Command = %q, want %q", rc.Command, "claude")
+		}
+		if got := rc.BuildCommand(); got != "claude --model haiku --dangerously-skip-permissions" {
+			t.Fatalf("BuildCommand() = %q, want %q", got, "claude --model haiku --dangerously-skip-permissions")
+		}
+	})
+
+	t.Run("unknown override errors", func(t *testing.T) {
+		_, _, err := ResolveAgentConfigWithOverride(townRoot, rigPath, "nope-not-an-agent")
+		if err == nil {
+			t.Fatal("expected error for unknown agent override")
+		}
+	})
+}
+
+func TestBuildPolecatStartupCommandWithAgentOverride(t *testing.T) {
+	townRoot := t.TempDir()
+	rigPath := filepath.Join(townRoot, "testrig")
+
+	townSettings := NewTownSettings()
+	if err := SaveTownSettings(TownSettingsPath(townRoot), townSettings); err != nil {
+		t.Fatalf("SaveTownSettings: %v", err)
+	}
+
+	// The rig settings file must exist for resolver calls that load it.
+	if err := SaveRigSettings(RigSettingsPath(rigPath), NewRigSettings()); err != nil {
+		t.Fatalf("SaveRigSettings: %v", err)
+	}
+
+	cmd, err := BuildPolecatStartupCommandWithAgentOverride("testrig", "toast", rigPath, "", "gemini")
+	if err != nil {
+		t.Fatalf("BuildPolecatStartupCommandWithAgentOverride: %v", err)
+	}
+	if !strings.Contains(cmd, "GT_ROLE=polecat") {
+		t.Fatalf("expected GT_ROLE export in command: %q", cmd)
+	}
+	if !strings.Contains(cmd, "GT_RIG=testrig") {
+		t.Fatalf("expected GT_RIG export in command: %q", cmd)
+	}
+	if !strings.Contains(cmd, "GT_POLECAT=toast") {
+		t.Fatalf("expected GT_POLECAT export in command: %q", cmd)
+	}
+	if !strings.Contains(cmd, "gemini --approval-mode yolo") {
+		t.Fatalf("expected gemini command in output: %q", cmd)
+	}
+}
+
+func TestBuildAgentStartupCommandWithAgentOverride(t *testing.T) {
+	townRoot := t.TempDir()
+
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte("{}"), 0600); err != nil {
+		t.Fatalf("WriteFile town.json: %v", err)
+	}
+
+	townSettings := NewTownSettings()
+	townSettings.DefaultAgent = "gemini"
+	if err := SaveTownSettings(TownSettingsPath(townRoot), townSettings); err != nil {
+		t.Fatalf("SaveTownSettings: %v", err)
+	}
+
+	originalWd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(originalWd) })
+	if err := os.Chdir(townRoot); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+
+	t.Run("empty override uses default agent", func(t *testing.T) {
+		cmd, err := BuildAgentStartupCommandWithAgentOverride("mayor", "mayor", "", "", "")
+		if err != nil {
+			t.Fatalf("BuildAgentStartupCommandWithAgentOverride: %v", err)
+		}
+		if !strings.Contains(cmd, "GT_ROLE=mayor") {
+			t.Fatalf("expected GT_ROLE export in command: %q", cmd)
+		}
+		if !strings.Contains(cmd, "BD_ACTOR=mayor") {
+			t.Fatalf("expected BD_ACTOR export in command: %q", cmd)
+		}
+		if !strings.Contains(cmd, "gemini --approval-mode yolo") {
+			t.Fatalf("expected gemini command in output: %q", cmd)
+		}
+	})
+
+	t.Run("override switches agent", func(t *testing.T) {
+		cmd, err := BuildAgentStartupCommandWithAgentOverride("mayor", "mayor", "", "", "codex")
+		if err != nil {
+			t.Fatalf("BuildAgentStartupCommandWithAgentOverride: %v", err)
+		}
+		if !strings.Contains(cmd, "codex") {
+			t.Fatalf("expected codex command in output: %q", cmd)
+		}
+	})
+}
+
+func TestBuildCrewStartupCommandWithAgentOverride(t *testing.T) {
+	townRoot := t.TempDir()
+	rigPath := filepath.Join(townRoot, "testrig")
+
+	townSettings := NewTownSettings()
+	if err := SaveTownSettings(TownSettingsPath(townRoot), townSettings); err != nil {
+		t.Fatalf("SaveTownSettings: %v", err)
+	}
+
+	if err := SaveRigSettings(RigSettingsPath(rigPath), NewRigSettings()); err != nil {
+		t.Fatalf("SaveRigSettings: %v", err)
+	}
+
+	cmd, err := BuildCrewStartupCommandWithAgentOverride("testrig", "max", rigPath, "gt prime", "gemini")
+	if err != nil {
+		t.Fatalf("BuildCrewStartupCommandWithAgentOverride: %v", err)
+	}
+	if !strings.Contains(cmd, "GT_ROLE=crew") {
+		t.Fatalf("expected GT_ROLE export in command: %q", cmd)
+	}
+	if !strings.Contains(cmd, "GT_RIG=testrig") {
+		t.Fatalf("expected GT_RIG export in command: %q", cmd)
+	}
+	if !strings.Contains(cmd, "GT_CREW=max") {
+		t.Fatalf("expected GT_CREW export in command: %q", cmd)
+	}
+	if !strings.Contains(cmd, "BD_ACTOR=testrig/crew/max") {
+		t.Fatalf("expected BD_ACTOR export in command: %q", cmd)
+	}
+	if !strings.Contains(cmd, "gemini --approval-mode yolo") {
+		t.Fatalf("expected gemini command in output: %q", cmd)
+	}
+}
+
+func TestBuildStartupCommand_UsesRigAgentWhenRigPathProvided(t *testing.T) {
+	townRoot := t.TempDir()
+	rigPath := filepath.Join(townRoot, "testrig")
+
+	townSettings := NewTownSettings()
+	townSettings.DefaultAgent = "gemini"
+	if err := SaveTownSettings(TownSettingsPath(townRoot), townSettings); err != nil {
+		t.Fatalf("SaveTownSettings: %v", err)
+	}
+
+	rigSettings := NewRigSettings()
+	rigSettings.Agent = "codex"
+	if err := SaveRigSettings(RigSettingsPath(rigPath), rigSettings); err != nil {
+		t.Fatalf("SaveRigSettings: %v", err)
+	}
+
+	cmd := BuildStartupCommand(map[string]string{"GT_ROLE": "witness"}, rigPath, "")
+	if !strings.Contains(cmd, "codex") {
+		t.Fatalf("expected rig agent (codex) in command: %q", cmd)
+	}
+	if strings.Contains(cmd, "gemini --approval-mode yolo") {
+		t.Fatalf("did not expect town default agent in command: %q", cmd)
+	}
+}
+
+func TestGetRuntimeCommand_UsesRigAgentWhenRigPathProvided(t *testing.T) {
+	townRoot := t.TempDir()
+	rigPath := filepath.Join(townRoot, "testrig")
+
+	townSettings := NewTownSettings()
+	townSettings.DefaultAgent = "gemini"
+	if err := SaveTownSettings(TownSettingsPath(townRoot), townSettings); err != nil {
+		t.Fatalf("SaveTownSettings: %v", err)
+	}
+
+	rigSettings := NewRigSettings()
+	rigSettings.Agent = "codex"
+	if err := SaveRigSettings(RigSettingsPath(rigPath), rigSettings); err != nil {
+		t.Fatalf("SaveRigSettings: %v", err)
+	}
+
+	cmd := GetRuntimeCommand(rigPath)
+	if !strings.HasPrefix(cmd, "codex") {
+		t.Fatalf("GetRuntimeCommand() = %q, want prefix %q", cmd, "codex")
+	}
+}
+
+func TestExpectedPaneCommands(t *testing.T) {
+	t.Run("claude maps to node", func(t *testing.T) {
+		got := ExpectedPaneCommands(&RuntimeConfig{Command: "claude"})
+		if len(got) != 1 || got[0] != "node" {
+			t.Fatalf("ExpectedPaneCommands(claude) = %v, want %v", got, []string{"node"})
+		}
+	})
+
+	t.Run("codex maps to executable", func(t *testing.T) {
+		got := ExpectedPaneCommands(&RuntimeConfig{Command: "codex"})
+		if len(got) != 1 || got[0] != "codex" {
+			t.Fatalf("ExpectedPaneCommands(codex) = %v, want %v", got, []string{"codex"})
+		}
+	})
+}
+
 func TestLoadRuntimeConfigFromSettings(t *testing.T) {
 	// Create temp rig with custom runtime config
 	dir := t.TempDir()
