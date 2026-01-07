@@ -2,6 +2,54 @@ package cmd
 
 import "testing"
 
+func TestAutoConvoyTitle(t *testing.T) {
+	tests := []struct {
+		name      string
+		beadID    string
+		beadTitle string
+		want      string
+	}{
+		{
+			name:      "prefix derived from bead id",
+			beadID:    "gt-1fpis",
+			beadTitle: "Fix thing",
+			want:      "gt: Fix thing",
+		},
+		{
+			name:      "multi-char prefix supported",
+			beadID:    "beads-task-xyz",
+			beadTitle: "Do stuff",
+			want:      "beads: Do stuff",
+		},
+		{
+			name:      "fallback when no hyphen",
+			beadID:    "orphan",
+			beadTitle: "No prefix",
+			want:      "Work: No prefix",
+		},
+		{
+			name:      "fallback when invalid prefix",
+			beadID:    "-bad",
+			beadTitle: "Bad prefix",
+			want:      "Work: Bad prefix",
+		},
+		{
+			name:      "fallback on empty bead id",
+			beadID:    "",
+			beadTitle: "Empty id",
+			want:      "Work: Empty id",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := autoConvoyTitle(tt.beadID, tt.beadTitle); got != tt.want {
+				t.Fatalf("autoConvoyTitle(%q, %q) = %q, want %q", tt.beadID, tt.beadTitle, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseWispIDFromJSON(t *testing.T) {
 	tests := []struct {
 		name    string

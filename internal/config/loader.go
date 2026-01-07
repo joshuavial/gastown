@@ -1012,6 +1012,13 @@ func GetRuntimeCommandWithPromptAndAgentOverride(rigPath, prompt, agentOverride 
 // It looks for the mayor/town.json marker file.
 // Returns empty string and no error if not found (caller should use defaults).
 func findTownRootFromCwd() (string, error) {
+	if townRoot, ok := os.LookupEnv("GT_TOWN_ROOT"); ok {
+		if strings.TrimSpace(townRoot) == "" {
+			return "", fmt.Errorf("GT_TOWN_ROOT is set but empty")
+		}
+		return townRoot, nil
+	}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("getting cwd: %w", err)

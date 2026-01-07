@@ -75,7 +75,7 @@ Auto-Convoy:
   a convoy to track the work unless --no-convoy is specified. This ensures
   all work appears in 'gt convoy list', even "swarm of one" assignments.
 
-  gt sling gt-abc gastown              # Creates "Work: <issue-title>" convoy
+  gt sling gt-abc gastown              # Creates "<issue-prefix>: <issue-title>" convoy
   gt sling gt-abc gastown --no-convoy  # Skip auto-convoy creation
 
 Target Resolution:
@@ -343,7 +343,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 		existingConvoy := isTrackedByConvoy(beadID)
 		if existingConvoy == "" {
 			if slingDryRun {
-				fmt.Printf("Would create convoy 'Work: %s'\n", info.Title)
+				fmt.Printf("Would create convoy %q\n", autoConvoyTitle(beadID, info.Title))
 				fmt.Printf("Would add tracking relation to %s\n", beadID)
 			} else {
 				convoyID, err := createAutoConvoy(beadID, info.Title)
@@ -1334,8 +1334,7 @@ func createAutoConvoy(beadID, beadTitle string) (string, error) {
 	// Generate convoy ID with cv- prefix
 	convoyID := fmt.Sprintf("hq-cv-%s", slingGenerateShortID())
 
-	// Create convoy with title "Work: <issue-title>"
-	convoyTitle := fmt.Sprintf("Work: %s", beadTitle)
+	convoyTitle := autoConvoyTitle(beadID, beadTitle)
 	description := fmt.Sprintf("Auto-created convoy tracking %s", beadID)
 
 	createArgs := []string{
@@ -1367,6 +1366,14 @@ func createAutoConvoy(beadID, beadTitle string) (string, error) {
 	}
 
 	return convoyID, nil
+}
+
+func autoConvoyTitle(beadID, beadTitle string) string {
+	prefix := strings.TrimSuffix(beads.ExtractPrefix(beadID), "-")
+	if prefix == "" {
+		return fmt.Sprintf("Work: %s", beadTitle)
+	}
+	return fmt.Sprintf("%s: %s", prefix, beadTitle)
 }
 
 // runBatchSling handles slinging multiple beads to a rig.

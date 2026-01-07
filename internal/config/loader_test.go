@@ -879,6 +879,8 @@ func TestRuntimeConfigBuildCommandWithPrompt(t *testing.T) {
 }
 
 func TestBuildAgentStartupCommand(t *testing.T) {
+	t.Setenv("GT_TOWN_ROOT", "")
+
 	// Test without rig config (uses defaults)
 	cmd := BuildAgentStartupCommand("witness", "gastown/witness", "", "")
 
