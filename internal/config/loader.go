@@ -838,6 +838,23 @@ func ResolveAgentConfig(townRoot, rigPath string) *RuntimeConfig {
 	return lookupAgentConfig(agentName, townSettings)
 }
 
+// ResolveAgentConfigOverride resolves a specific agent configuration by name.
+// This bypasses rig/town defaults and is intended for one-off overrides (e.g., gt sling --agent).
+func ResolveAgentConfigOverride(townRoot, rigPath, agentName string) *RuntimeConfig {
+	_ = rigPath // Reserved for future use (e.g., rig-scoped custom agent registry)
+
+	// Load town settings for custom agent lookup
+	townSettings, err := LoadOrCreateTownSettings(TownSettingsPath(townRoot))
+	if err != nil {
+		townSettings = NewTownSettings()
+	}
+
+	// Load custom agent registry if it exists
+	_ = LoadAgentRegistry(DefaultAgentRegistryPath(townRoot))
+
+	return lookupAgentConfig(agentName, townSettings)
+}
+
 // lookupAgentConfig looks up an agent by name.
 // First checks town's custom agents, then built-in presets from agents.go.
 func lookupAgentConfig(name string, townSettings *TownSettings) *RuntimeConfig {
@@ -1005,6 +1022,42 @@ func BuildPolecatStartupCommand(rigName, polecatName, rigPath, prompt string) st
 		"GIT_AUTHOR_NAME": polecatName,
 	}
 	return BuildStartupCommand(envVars, rigPath, prompt)
+}
+
+// BuildPolecatStartupCommandWithAgent builds the startup command for a polecat using an explicit agent name.
+// This is used for one-off overrides (e.g., gt sling --agent codex) without mutating rig settings.
+func BuildPolecatStartupCommandWithAgent(rigName, polecatName, rigPath, agentName, prompt string) string {
+	bdActor := fmt.Sprintf("%s/polecats/%s", rigName, polecatName)
+	envVars := map[string]string{
+		"GT_ROLE":         "polecat",
+		"GT_RIG":          rigName,
+		"GT_POLECAT":      polecatName,
+		"BD_ACTOR":        bdActor,
+		"GIT_AUTHOR_NAME": polecatName,
+	}
+
+	// Build environment export prefix
+	var exports []string
+	for k, v := range envVars {
+		exports = append(exports, fmt.Sprintf("%s=%s", k, v))
+	}
+	sort.Strings(exports)
+
+	cmd := ""
+	if len(exports) > 0 {
+		cmd = "export " + strings.Join(exports, " ") + " && "
+	}
+
+	// Resolve override runtime config
+	townRoot := filepath.Dir(rigPath)
+	rc := ResolveAgentConfigOverride(townRoot, rigPath, agentName)
+	if prompt != "" {
+		cmd += rc.BuildCommandWithPrompt(prompt)
+	} else {
+		cmd += rc.BuildCommand()
+	}
+
+	return cmd
 }
 
 // BuildCrewStartupCommand builds the startup command for a crew member.

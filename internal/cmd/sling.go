@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base32"
 	"encoding/json"
@@ -98,6 +99,7 @@ var (
 	slingOnTarget string   // --on flag: target bead when slinging a formula
 	slingVars     []string // --var flag: formula variables (key=value)
 	slingArgs     string   // --args flag: natural language instructions for executor
+	slingAgent    string   // --agent flag: override runtime agent for spawned polecats
 
 	// Flags migrated for polecat spawning (used by sling for work assignment
 	slingNaked    bool   // --naked: no-tmux mode (skip session creation)
@@ -114,6 +116,7 @@ func init() {
 	slingCmd.Flags().StringVar(&slingOnTarget, "on", "", "Apply formula to existing bead (implies wisp scaffolding)")
 	slingCmd.Flags().StringArrayVar(&slingVars, "var", nil, "Formula variable (key=value), can be repeated")
 	slingCmd.Flags().StringVarP(&slingArgs, "args", "a", "", "Natural language instructions for the executor (e.g., 'patch release')")
+	slingCmd.Flags().StringVar(&slingAgent, "agent", "", "Override agent/runtime for spawned polecats (e.g., claude, gemini, codex, or custom alias)")
 
 	// Flags for polecat spawning (when target is a rig)
 	slingCmd.Flags().BoolVar(&slingNaked, "naked", false, "No-tmux mode: assign work but skip session creation (manual start)")
@@ -150,7 +153,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 	if len(args) > 2 {
 		lastArg := args[len(args)-1]
 		if rigName, isRig := IsRigName(lastArg); isRig {
-			return runBatchSling(args[:len(args)-1], rigName, townBeadsDir)
+			return runBatchSling(args[:len(args)-1], rigName, townRoot)
 		}
 	}
 
@@ -163,7 +166,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 		formulaName = args[0]
 		beadID = slingOnTarget
 		// Verify both exist
-		if err := verifyBeadExists(beadID); err != nil {
+		if err := verifyBeadExistsWithTown(townRoot, beadID); err != nil {
 			return err
 		}
 		if err := verifyFormulaExists(formulaName); err != nil {
@@ -174,7 +177,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 		firstArg := args[0]
 
 		// Try as bead first
-		if err := verifyBeadExists(firstArg); err == nil {
+		if err := verifyBeadExistsWithTown(townRoot, firstArg); err == nil {
 			// It's a bead
 			beadID = firstArg
 		} else {
@@ -241,6 +244,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 					Force:    slingForce,
 					Naked:    slingNaked,
 					Account:  slingAccount,
+					Agent:    slingAgent,
 					Create:   slingCreate,
 					HookBead: beadID, // Set atomically at spawn time
 				}
@@ -289,7 +293,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check if bead is already pinned (guard against accidental re-sling)
-	info, err := getBeadInfo(beadID)
+	info, err := getBeadInfo(townRoot, beadID, hookWorkDir)
 	if err != nil {
 		return fmt.Errorf("checking bead status: %w", err)
 	}
@@ -351,8 +355,14 @@ func runSling(cmd *cobra.Command, args []string) error {
 	if formulaName != "" {
 		fmt.Printf("  Instantiating formula %s...\n", formulaName)
 
+		// Run all bd molecule steps in the same beads context as the target bead.
+		// This avoids cross-database IDs (e.g., creating hq-wisp-* for a gt-* bead),
+		// and ensures bonding can resolve both the wisp and the original bead.
+		beadWorkDir := beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
+
 		// Step 1: Cook the formula (ensures proto exists)
 		cookCmd := exec.Command("bd", "--no-daemon", "cook", formulaName)
+		cookCmd.Dir = beadWorkDir
 		cookCmd.Stderr = os.Stderr
 		if err := cookCmd.Run(); err != nil {
 			return fmt.Errorf("cooking formula %s: %w", formulaName, err)
@@ -362,6 +372,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 		featureVar := fmt.Sprintf("feature=%s", info.Title)
 		wispArgs := []string{"--no-daemon", "mol", "wisp", formulaName, "--var", featureVar, "--json"}
 		wispCmd := exec.Command("bd", wispArgs...)
+		wispCmd.Dir = beadWorkDir
 		wispCmd.Stderr = os.Stderr
 		wispOut, err := wispCmd.Output()
 		if err != nil {
@@ -370,18 +381,27 @@ func runSling(cmd *cobra.Command, args []string) error {
 
 		// Parse wisp output to get the root ID
 		var wispResult struct {
-			RootID string `json:"root_id"`
+			// Older bd versions used root_id; newer use new_epic_id.
+			RootID    string `json:"root_id"`
+			NewEpicID string `json:"new_epic_id"`
 		}
 		if err := json.Unmarshal(wispOut, &wispResult); err != nil {
 			return fmt.Errorf("parsing wisp output: %w", err)
 		}
 		wispRootID := wispResult.RootID
+		if wispRootID == "" {
+			wispRootID = wispResult.NewEpicID
+		}
+		if wispRootID == "" {
+			return fmt.Errorf("creating wisp for formula %s: missing root id in bd output", formulaName)
+		}
 		fmt.Printf("%s Formula wisp created: %s\n", style.Bold.Render("✓"), wispRootID)
 
 		// Step 3: Bond wisp to original bead (creates compound)
 		// Use --no-daemon for mol bond (requires direct database access)
 		bondArgs := []string{"--no-daemon", "mol", "bond", wispRootID, beadID, "--json"}
 		bondCmd := exec.Command("bd", bondArgs...)
+		bondCmd.Dir = beadWorkDir
 		bondCmd.Stderr = os.Stderr
 		bondOut, err := bondCmd.Output()
 		if err != nil {
@@ -391,13 +411,16 @@ func runSling(cmd *cobra.Command, args []string) error {
 		// Parse bond output - the wisp root becomes the compound root
 		// After bonding, we hook the wisp root (which now contains the original bead)
 		var bondResult struct {
-			RootID string `json:"root_id"`
+			RootID   string `json:"root_id"`
+			ResultID string `json:"result_id"`
 		}
 		if err := json.Unmarshal(bondOut, &bondResult); err != nil {
 			// Fallback: use wisp root as the compound root
 			fmt.Printf("%s Could not parse bond output, using wisp root\n", style.Dim.Render("Warning:"))
 		} else if bondResult.RootID != "" {
 			wispRootID = bondResult.RootID
+		} else if bondResult.ResultID != "" {
+			wispRootID = bondResult.ResultID
 		}
 
 		fmt.Printf("%s Formula bonded to %s\n", style.Bold.Render("✓"), beadID)
@@ -469,11 +492,30 @@ func runSling(cmd *cobra.Command, args []string) error {
 // storeArgsInBead stores args in the bead's description using attached_args field.
 // This enables no-tmux mode where agents discover args via gt prime / bd show.
 func storeArgsInBead(beadID, args string) error {
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil {
+		return fmt.Errorf("finding town root: %w", err)
+	}
+	workDir := beads.ResolveHookDir(townRoot, beadID, "")
+
 	// Get the bead to preserve existing description content
 	showCmd := exec.Command("bd", "--no-daemon", "show", beadID, "--json")
-	out, err := showCmd.Output()
+	showCmd.Dir = workDir
+	out, err := showCmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("fetching bead: %w", err)
+		if bytes.Contains(out, []byte("Database out of sync with JSONL")) {
+			syncCmd := exec.Command("bd", "sync", "--import-only")
+			syncCmd.Dir = workDir
+			syncCmd.Stderr = os.Stderr
+			if syncErr := syncCmd.Run(); syncErr == nil {
+				showCmd = exec.Command("bd", "--no-daemon", "show", beadID, "--json")
+				showCmd.Dir = workDir
+				out, err = showCmd.CombinedOutput()
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("fetching bead: %w", err)
+		}
 	}
 
 	// Parse the bead
@@ -500,6 +542,7 @@ func storeArgsInBead(beadID, args string) error {
 
 	// Update the bead
 	updateCmd := exec.Command("bd", "--no-daemon", "update", beadID, "--description="+newDesc)
+	updateCmd.Dir = workDir
 	updateCmd.Stderr = os.Stderr
 	if err := updateCmd.Run(); err != nil {
 		return fmt.Errorf("updating bead description: %w", err)
@@ -515,11 +558,30 @@ func storeDispatcherInBead(beadID, dispatcher string) error {
 		return nil
 	}
 
-	// Get the bead to preserve existing description content
-	showCmd := exec.Command("bd", "show", beadID, "--json")
-	out, err := showCmd.Output()
+	townRoot, err := workspace.FindFromCwd()
 	if err != nil {
-		return fmt.Errorf("fetching bead: %w", err)
+		return fmt.Errorf("finding town root: %w", err)
+	}
+	workDir := beads.ResolveHookDir(townRoot, beadID, "")
+
+	// Get the bead to preserve existing description content
+	showCmd := exec.Command("bd", "--no-daemon", "show", beadID, "--json")
+	showCmd.Dir = workDir
+	out, err := showCmd.CombinedOutput()
+	if err != nil {
+		if bytes.Contains(out, []byte("Database out of sync with JSONL")) {
+			syncCmd := exec.Command("bd", "sync", "--import-only")
+			syncCmd.Dir = workDir
+			syncCmd.Stderr = os.Stderr
+			if syncErr := syncCmd.Run(); syncErr == nil {
+				showCmd = exec.Command("bd", "--no-daemon", "show", beadID, "--json")
+				showCmd.Dir = workDir
+				out, err = showCmd.CombinedOutput()
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("fetching bead: %w", err)
+		}
 	}
 
 	// Parse the bead
@@ -545,7 +607,8 @@ func storeDispatcherInBead(beadID, dispatcher string) error {
 	newDesc := beads.SetAttachmentFields(issue, fields)
 
 	// Update the bead
-	updateCmd := exec.Command("bd", "update", beadID, "--description="+newDesc)
+	updateCmd := exec.Command("bd", "--no-daemon", "update", beadID, "--description="+newDesc)
+	updateCmd.Dir = workDir
 	updateCmd.Stderr = os.Stderr
 	if err := updateCmd.Run(); err != nil {
 		return fmt.Errorf("updating bead description: %w", err)
@@ -675,14 +738,39 @@ func sessionToAgentID(sessionName string) string {
 }
 
 // verifyBeadExists checks that the bead exists using bd show.
+// Uses prefix-based routing to run bd in the correct rig directory.
 func verifyBeadExists(beadID string) error {
-	cmd := exec.Command("bd", "--no-daemon", "show", beadID, "--json")
-	// Set BEADS_DIR to town root so hq-* beads are accessible
-	if townRoot, err := workspace.FindFromCwd(); err == nil {
-		cmd.Env = append(os.Environ(), "BEADS_DIR="+filepath.Join(townRoot, ".beads"))
-		cmd.Dir = townRoot
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil {
+		return fmt.Errorf("finding town root: %w", err)
 	}
-	if err := cmd.Run(); err != nil {
+	return verifyBeadExistsWithTown(townRoot, beadID)
+}
+
+// verifyBeadExistsWithTown checks that the bead exists using bd show.
+// Uses prefix-based routing to run bd in the correct rig directory.
+func verifyBeadExistsWithTown(townRoot, beadID string) error {
+	workDir := beads.ResolveHookDir(townRoot, beadID, "")
+	runShow := func() ([]byte, error) {
+		showCmd := exec.Command("bd", "--no-daemon", "show", beadID, "--json")
+		showCmd.Dir = workDir
+		return showCmd.CombinedOutput()
+	}
+
+	out, err := runShow()
+	if err != nil {
+		// Direct bd mode can fail with "DB out of sync" if JSONL changed (e.g., after git pull).
+		// Retry once after importing, to keep gt sling resilient.
+		if bytes.Contains(out, []byte("Database out of sync with JSONL")) {
+			syncCmd := exec.Command("bd", "sync", "--import-only")
+			syncCmd.Dir = workDir
+			syncCmd.Stderr = os.Stderr
+			if syncErr := syncCmd.Run(); syncErr == nil {
+				if _, retryErr := runShow(); retryErr == nil {
+					return nil
+				}
+			}
+		}
 		return fmt.Errorf("bead '%s' not found (bd show failed)", beadID)
 	}
 	return nil
@@ -696,11 +784,28 @@ type beadInfo struct {
 }
 
 // getBeadInfo returns status and assignee for a bead.
-func getBeadInfo(beadID string) (*beadInfo, error) {
-	cmd := exec.Command("bd", "--no-daemon", "show", beadID, "--json")
-	out, err := cmd.Output()
+// Uses prefix-based routing to run bd in the correct rig directory.
+func getBeadInfo(townRoot, beadID, hookWorkDir string) (*beadInfo, error) {
+	workDir := beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
+	runShow := func() ([]byte, error) {
+		showCmd := exec.Command("bd", "--no-daemon", "show", beadID, "--json")
+		showCmd.Dir = workDir
+		return showCmd.CombinedOutput()
+	}
+
+	out, err := runShow()
 	if err != nil {
-		return nil, fmt.Errorf("bead '%s' not found", beadID)
+		if bytes.Contains(out, []byte("Database out of sync with JSONL")) {
+			syncCmd := exec.Command("bd", "sync", "--import-only")
+			syncCmd.Dir = workDir
+			syncCmd.Stderr = os.Stderr
+			if syncErr := syncCmd.Run(); syncErr == nil {
+				out, err = runShow()
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("bead '%s' not found", beadID)
+		}
 	}
 	// bd show --json returns an array (issue + dependents), take first element
 	var infos []beadInfo
@@ -848,6 +953,7 @@ func runSlingFormula(args []string) error {
 					Force:   slingForce,
 					Naked:   slingNaked,
 					Account: slingAccount,
+					Agent:   slingAgent,
 					Create:  slingCreate,
 				}
 				spawnInfo, spawnErr := SpawnPolecatForSling(rigName, spawnOpts)
@@ -1340,10 +1446,12 @@ func createAutoConvoy(beadID, beadTitle string) (string, error) {
 
 // runBatchSling handles slinging multiple beads to a rig.
 // Each bead gets its own freshly spawned polecat.
-func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error {
+func runBatchSling(beadIDs []string, rigName string, townRoot string) error {
+	townBeadsDir := filepath.Join(townRoot, ".beads")
+
 	// Validate all beads exist before spawning any polecats
 	for _, beadID := range beadIDs {
-		if err := verifyBeadExists(beadID); err != nil {
+		if err := verifyBeadExistsWithTown(townRoot, beadID); err != nil {
 			return fmt.Errorf("bead '%s' not found", beadID)
 		}
 	}
@@ -1375,7 +1483,7 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 		fmt.Printf("\n[%d/%d] Slinging %s...\n", i+1, len(beadIDs), beadID)
 
 		// Check bead status
-		info, err := getBeadInfo(beadID)
+		info, err := getBeadInfo(townRoot, beadID, "")
 		if err != nil {
 			results = append(results, slingResult{beadID: beadID, success: false, errMsg: err.Error()})
 			fmt.Printf("  %s Could not get bead info: %v\n", style.Dim.Render("✗"), err)
@@ -1393,6 +1501,7 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 			Force:    slingForce,
 			Naked:    slingNaked,
 			Account:  slingAccount,
+			Agent:    slingAgent,
 			Create:   slingCreate,
 			HookBead: beadID, // Set atomically at spawn time
 		}
@@ -1422,7 +1531,6 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 		}
 
 		// Hook the bead. See: https://github.com/steveyegge/gastown/issues/148
-		townRoot := filepath.Dir(townBeadsDir)
 		hookCmd := exec.Command("bd", "--no-daemon", "update", beadID, "--status=hooked", "--assignee="+targetAgent)
 		hookCmd.Dir = beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
 		hookCmd.Stderr = os.Stderr
