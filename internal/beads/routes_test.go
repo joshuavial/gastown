@@ -134,6 +134,7 @@ func TestResolveHookDir(t *testing.T) {
 	}
 
 	routesContent := `{"prefix": "ap-", "path": "ai_platform/mayor/rig"}
+{"prefix": "GC-", "path": "gcli/mayor/rig"}
 {"prefix": "hq-", "path": "."}
 `
 	if err := os.WriteFile(filepath.Join(beadsDir, "routes.jsonl"), []byte(routesContent), 0644); err != nil {
@@ -163,6 +164,12 @@ func TestResolveHookDir(t *testing.T) {
 			beadID:      "hq-test",
 			hookWorkDir: "",
 			expected:    tmpDir,
+		},
+		{
+			name:        "uppercase prefix routes correctly",
+			beadID:      "GC-0fj",
+			hookWorkDir: "",
+			expected:    filepath.Join(tmpDir, "gcli/mayor/rig"),
 		},
 		{
 			name:        "unknown prefix uses hookWorkDir as fallback",
