@@ -138,17 +138,23 @@ func cleanBeadsRuntimeFiles(beadsDir string) error {
 		"mq",
 	}
 
+	var firstErr error
 	for _, pattern := range runtimePatterns {
 		matches, err := filepath.Glob(filepath.Join(beadsDir, pattern))
 		if err != nil {
-			continue // Invalid pattern, skip
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
 		for _, match := range matches {
-			os.RemoveAll(match) // Best effort, ignore errors
+			if err := os.RemoveAll(match); err != nil && firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
 
-	return nil
+	return firstErr
 }
 
 // SetupRedirect creates a .beads/redirect file for a worktree to point to the rig's shared beads.
