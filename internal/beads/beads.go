@@ -396,7 +396,24 @@ func (b *Beads) run(args ...string) ([]byte, error) {
 
 	err := cmd.Run()
 	if err != nil {
-		return nil, b.wrapError(err, stderr.String(), args)
+		stderrStr := stderr.String()
+
+		// If the DB is stale, retry via daemon mode (daemon auto-imports).
+		// This makes read operations robust after git pulls or JSONL updates.
+		if strings.Contains(stderrStr, "Database out of sync with JSONL") {
+			var stdout2, stderr2 bytes.Buffer
+			cmd2 := exec.Command("bd", args...)
+			cmd2.Dir = b.workDir
+			cmd2.Stdout = &stdout2
+			cmd2.Stderr = &stderr2
+			if err2 := cmd2.Run(); err2 == nil {
+				return stdout2.Bytes(), nil
+			} else {
+				return nil, b.wrapError(err2, stderr2.String(), args)
+			}
+		}
+
+		return nil, b.wrapError(err, stderrStr, args)
 	}
 
 	return stdout.Bytes(), nil
