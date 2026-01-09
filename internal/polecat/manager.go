@@ -281,7 +281,7 @@ func (m *Manager) AddWithOptions(name string, opts AddOptions) (*Polecat, error)
 
 	// Copy overlay files from .runtime/overlay/ to polecat root.
 	// This allows services to have .env and other config files at their root.
-	if err := rig.CopyOverlay(m.rig.Path, polecatPath); err != nil {
+	if err := rig.CopyOverlay(m.rig.Path, polecatDir); err != nil {
 		// Non-fatal - log warning but continue
 		fmt.Printf("Warning: could not copy overlay files: %v\n", err)
 	}
@@ -538,7 +538,7 @@ func (m *Manager) RepairWorktreeWithOptions(name string, force bool, opts AddOpt
 	}
 
 	// Copy overlay files from .runtime/overlay/ to polecat root.
-	if err := rig.CopyOverlay(m.rig.Path, polecatPath); err != nil {
+	if err := rig.CopyOverlay(m.rig.Path, polecatDir); err != nil {
 		fmt.Printf("Warning: could not copy overlay files: %v\n", err)
 	}
 
