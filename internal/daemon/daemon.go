@@ -378,7 +378,7 @@ func (d *Daemon) ensureWitnessRunning(rigName string) {
 	}
 
 	// Manager.Start() handles: zombie detection, session creation, env vars, theming,
-	// WaitForClaudeReady, and crucially - startup/propulsion nudges (GUPP).
+	// startup readiness waits, and crucially - startup/propulsion nudges (GUPP).
 	// It returns ErrAlreadyRunning if Claude is already running in tmux.
 	r := &rig.Rig{
 		Name: rigName,
@@ -386,7 +386,7 @@ func (d *Daemon) ensureWitnessRunning(rigName string) {
 	}
 	mgr := witness.NewManager(r)
 
-	if err := mgr.Start(false); err != nil {
+	if err := mgr.Start(false, ""); err != nil {
 		if err == witness.ErrAlreadyRunning {
 			// Already running - nothing to do
 			return
