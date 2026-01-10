@@ -256,6 +256,7 @@ var (
 	rigAddPrefix       string
 	rigAddLocalRepo    string
 	rigAddBranch       string
+	rigListActive      bool
 	rigResetHandoff    bool
 	rigResetMail       bool
 	rigResetStale      bool
@@ -286,6 +287,8 @@ func init() {
 	rigAddCmd.Flags().StringVar(&rigAddPrefix, "prefix", "", "Beads issue prefix (default: derived from name)")
 	rigAddCmd.Flags().StringVar(&rigAddLocalRepo, "local-repo", "", "Local repo path to share git objects (optional)")
 	rigAddCmd.Flags().StringVar(&rigAddBranch, "branch", "", "Default branch name (default: auto-detected from remote)")
+
+	rigListCmd.Flags().BoolVar(&rigListActive, "active", false, "Show only active rigs (operational status or running agents)")
 
 	rigResetCmd.Flags().BoolVar(&rigResetHandoff, "handoff", false, "Clear handoff content")
 	rigResetCmd.Flags().BoolVar(&rigResetMail, "mail", false, "Clear stale mail messages")
@@ -453,37 +456,166 @@ func runRigList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Create rig manager to get details
+	// Create rig manager and tmux client
 	g := git.NewGit(townRoot)
 	mgr := rig.NewManager(townRoot, rigsConfig, g)
+	t := tmux.NewTmux()
 
-	fmt.Printf("Rigs in %s:\n\n", townRoot)
+	// Header
+	if rigListActive {
+		fmt.Printf("Active Rigs in %s:\n\n", townRoot)
+	} else {
+		fmt.Printf("Rigs in %s:\n\n", townRoot)
+	}
+
+	// Collect and optionally filter rigs
+	type rigInfo struct {
+		name           string
+		rig            *rig.Rig
+		opState        string
+		opSource       string
+		witnessRunning bool
+		witnessUptime  *time.Duration
+		refineryRunning bool
+		refineryUptime  *time.Duration
+		refineryQueue   int
+		activePolecats int
+		totalPolecats  int
+		totalCrew      int
+		isActive       bool
+	}
+
+	var rigs []rigInfo
 
 	for name := range rigsConfig.Rigs {
 		r, err := mgr.GetRig(name)
 		if err != nil {
-			fmt.Printf("  %s %s\n", style.Warning.Render("!"), name)
 			continue
 		}
 
-		summary := r.Summary()
-		fmt.Printf("  %s\n", style.Bold.Render(name))
-		fmt.Printf("    Polecats: %d  Crew: %d\n", summary.PolecatCount, summary.CrewCount)
+		info := rigInfo{
+			name: name,
+			rig:  r,
+		}
 
-		agents := []string{}
-		if summary.HasRefinery {
-			agents = append(agents, "refinery")
+		// Get operational state
+		info.opState, info.opSource = getRigOperationalState(townRoot, name)
+
+		// Check witness runtime state
+		witnessSession := fmt.Sprintf("gt-%s-witness", name)
+		info.witnessRunning, _ = t.HasSession(witnessSession)
+		if info.witnessRunning {
+			witMgr := witness.NewManager(r)
+			if witStatus, err := witMgr.Status(); err == nil && witStatus.StartedAt != nil {
+				uptime := time.Since(*witStatus.StartedAt)
+				info.witnessUptime = &uptime
+			}
 		}
-		if summary.HasWitness {
-			agents = append(agents, "witness")
+
+		// Check refinery runtime state
+		refinerySession := fmt.Sprintf("gt-%s-refinery", name)
+		info.refineryRunning, _ = t.HasSession(refinerySession)
+		if info.refineryRunning {
+			refMgr := refinery.NewManager(r)
+			if refStatus, err := refMgr.Status(); err == nil && refStatus.StartedAt != nil {
+				uptime := time.Since(*refStatus.StartedAt)
+				info.refineryUptime = &uptime
+			}
+			// Get queue size
+			if queue, err := refMgr.Queue(); err == nil {
+				info.refineryQueue = len(queue)
+			}
 		}
-		if r.HasMayor {
-			agents = append(agents, "mayor")
+
+		// Count polecats
+		summary := r.Summary()
+		info.totalPolecats = summary.PolecatCount
+		info.totalCrew = summary.CrewCount
+
+		// Count active polecats (those with tmux sessions)
+		polecatGit := git.NewGit(r.Path)
+		polecatMgr := polecat.NewManager(r, polecatGit)
+		if polecats, err := polecatMgr.List(); err == nil {
+			for _, p := range polecats {
+				sessionName := fmt.Sprintf("gt-%s-%s", name, p.Name)
+				if hasSession, _ := t.HasSession(sessionName); hasSession {
+					info.activePolecats++
+				}
+			}
 		}
-		if len(agents) > 0 {
-			fmt.Printf("    Agents: %v\n", agents)
+
+		// Determine if rig is active
+		info.isActive = info.opState == "OPERATIONAL" ||
+			info.witnessRunning ||
+			info.refineryRunning ||
+			info.activePolecats > 0
+
+		// Filter if --active flag is set
+		if rigListActive && !info.isActive {
+			continue
 		}
+
+		rigs = append(rigs, info)
+	}
+
+	// Display rigs
+	for _, info := range rigs {
+		// Status icon prefix
+		prefix := "  "
+		if info.opState == "PARKED" || info.opState == "DOCKED" {
+			prefix = "⏸ "
+		}
+
+		fmt.Printf("%s%s\n", prefix, style.Bold.Render(info.name))
+
+		// Operational status
+		if info.opState == "OPERATIONAL" {
+			fmt.Printf("    Status: %s\n", style.Success.Render(info.opState))
+		} else if info.opState == "PARKED" {
+			fmt.Printf("    Status: %s (%s)\n", style.Warning.Render(info.opState), info.opSource)
+		} else if info.opState == "DOCKED" {
+			fmt.Printf("    Status: %s (%s)\n", style.Dim.Render(info.opState), info.opSource)
+		}
+
+		// Polecats and crew
+		if info.activePolecats > 0 && info.totalPolecats > 0 {
+			fmt.Printf("    Polecats: %d (%d active)  Crew: %d\n", info.totalPolecats, info.activePolecats, info.totalCrew)
+		} else {
+			fmt.Printf("    Polecats: %d  Crew: %d\n", info.totalPolecats, info.totalCrew)
+		}
+
+		// Witness status
+		if info.witnessRunning {
+			if info.witnessUptime != nil {
+				fmt.Printf("    Witness: %s (last patrol: %s ago)\n",
+					style.Success.Render("active"), formatDuration(*info.witnessUptime))
+			} else {
+				fmt.Printf("    Witness: %s\n", style.Success.Render("active"))
+			}
+		} else {
+			fmt.Printf("    Witness: %s\n", style.Dim.Render("stopped"))
+		}
+
+		// Refinery status
+		if info.refineryRunning {
+			if info.refineryQueue > 0 {
+				fmt.Printf("    Refinery: %s (queue: %d)\n",
+					style.Success.Render("active"), info.refineryQueue)
+			} else if info.refineryUptime != nil {
+				fmt.Printf("    Refinery: %s (uptime: %s)\n",
+					style.Success.Render("active"), formatDuration(*info.refineryUptime))
+			} else {
+				fmt.Printf("    Refinery: %s\n", style.Success.Render("active"))
+			}
+		} else {
+			fmt.Printf("    Refinery: %s\n", style.Dim.Render("stopped"))
+		}
+
 		fmt.Println()
+	}
+
+	if len(rigs) == 0 && rigListActive {
+		fmt.Println("No active rigs found.")
 	}
 
 	return nil
