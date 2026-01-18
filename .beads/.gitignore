@@ -1,3 +1,7 @@
+# Beads-sync worktree .beads/.gitignore
+# This worktree commits issues.jsonl, metadata.json, interactions.jsonl, config.yaml
+# Root .gitignore handles the negation patterns
+
 # SQLite databases
 *.db
 *.db?*
@@ -10,24 +14,18 @@ daemon.lock
 daemon.log
 daemon.pid
 bd.sock
-
-# Local version tracking (prevents upgrade notification spam after git ops)
 .local_version
 
 # Legacy database files
 db.sqlite
 bd.db
 
-# Merge artifacts (temporary files from 3-way merge)
+# Merge artifacts
 beads.base.jsonl
 beads.base.meta.json
 beads.left.jsonl
 beads.left.meta.json
 beads.right.jsonl
 beads.right.meta.json
-
-# Keep JSONL exports and config (source of truth for git)
-!issues.jsonl
-!interactions.jsonl
-!metadata.json
-!config.json
+sync-state.json
+last-touched
