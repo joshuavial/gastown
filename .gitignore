@@ -1,31 +1,22 @@
-# Binaries
-/gt
-*.exe
+# Beads-sync worktree gitignore
+# This worktree commits the JSONL files that the main repo ignores
 
-# Build
-/dist/
-/build/
+# Still ignore runtime state
+.beads/redirect
+.beads/mq/
+.beads/last-touched
+.beads/daemon-*.log.gz
+.beads/.sync.lock
+.beads/sync_base.jsonl
+.beads/*.db
+.beads/*.db-*
+.beads/daemon.lock
+.beads/daemon.log
+.beads/daemon.pid
+.beads/bd.sock
 
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Test
-coverage.out
-*.test
-
-# Local config
-config.toml
-!config.example.toml
-gt
-
-# Runtime state
-state.json
-.runtime/
+# Un-ignore the sync files (override parent gitignore)
+!.beads/issues.jsonl
+!.beads/interactions.jsonl
+!.beads/metadata.json
+!.beads/config.yaml
