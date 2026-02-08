@@ -14,6 +14,7 @@ import (
 	"github.com/steveyegge/gastown/internal/ui"
 	"github.com/steveyegge/gastown/internal/version"
 	"github.com/steveyegge/gastown/internal/workspace"
+	"golang.org/x/term"
 )
 
 var rootCmd = &cobra.Command{
@@ -74,6 +75,8 @@ var branchCheckExemptCommands = map[string]bool{
 	"doctor":     true, // Used to fix the problem
 	"install":    true, // Initial setup
 	"git-init":   true, // Git setup
+	"costs":      true, // Called from hooks
+	"hook":       true, // Called from hooks
 }
 
 // persistentPreRun runs before every command.
@@ -81,7 +84,9 @@ func persistentPreRun(cmd *cobra.Command, args []string) error {
 	// Check if binary was built properly (via make build, not raw go build).
 	// Raw go build produces unsigned binaries that macOS may kill.
 	// Warning only - doesn't block execution.
-	if BuiltProperly == "" {
+	// Only warn when stderr is a terminal to avoid breaking hooks that
+	// capture stderr (e.g., Claude Code Stop hook running gt costs record).
+	if BuiltProperly == "" && term.IsTerminal(int(os.Stderr.Fd())) {
 		fmt.Fprintln(os.Stderr, "WARNING: This binary was built with 'go build' directly.")
 		fmt.Fprintln(os.Stderr, "         Use 'make build' to create a properly signed binary.")
 		if gtRoot := os.Getenv("GT_ROOT"); gtRoot != "" {
