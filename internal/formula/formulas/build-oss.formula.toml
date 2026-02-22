@@ -1,0 +1,296 @@
+description = """
+Build and install an OSS fork with all pending PRs applied locally.
+
+This formula creates a local integration build by:
+1. Syncing mayor/rig main with upstream
+2. Finding all open PRs from origin to upstream
+3. Applying those PR branches to mayor/rig
+4. Building and installing (auto-detects Go projects)
+
+## Use Case
+
+When you have multiple PRs pending review on an upstream OSS project, you want to:
+- Test them all together locally
+- Build a binary with all your pending work
+- Catch integration issues before PRs merge
+
+## Prerequisites
+
+- Rig must have `upstream` remote pointing to source of truth
+- Rig must have `origin` remote pointing to your fork
+- PRs must be from origin branches to upstream
+
+## Example
+
+```bash
+# Run on a Go project
+bd pour build-oss --var rig=google_cli
+
+# This will:
+# - cd ~/gt/google_cli/mayor/rig
+# - git fetch --all
+# - git reset --hard upstream/main
+# - Find open PRs: gh pr list --repo upstream/repo --author @me
+# - Cherry-pick or merge each PR's branch
+# - go build ./... && go install ./...
+```
+
+## Variables
+
+| Variable | Description |
+|----------|-------------|
+| rig | Rig name (e.g., google_cli). Path: ~/gt/<rig>/mayor/rig |"""
+formula = "build-oss"
+version = 1
+
+[[steps]]
+id = "sync-upstream"
+title = "Sync mayor/rig with upstream main"
+description = """
+Ensure mayor/rig is on a clean upstream/main baseline.
+
+**Rig path**: `~/gt/{{rig}}/mayor/rig`
+
+```bash
+cd ~/gt/{{rig}}/mayor/rig
+
+# Verify remotes are configured correctly
+git remote -v
+# Expected:
+# origin    git@github.com:your-username/{{rig}}.git (your fork)
+# upstream  git@github.com:source-org/{{rig}}.git (source of truth)
+
+# Fetch all remotes
+git fetch --all --prune
+
+# Stash any local changes to avoid conflicts
+git stash --include-untracked 2>/dev/null || true
+
+# Checkout main and reset to upstream
+git checkout main
+git reset --hard upstream/main
+```
+
+**Gate**: `git status` shows clean working directory on main.
+`git diff upstream/main` shows no differences.
+
+**If upstream remote missing:**
+```bash
+# Find the upstream URL from existing PRs or project docs
+git remote add upstream <upstream-url>
+git fetch upstream
+```"""
+
+[[steps]]
+id = "find-prs"
+title = "Find open PRs from origin to upstream"
+needs = ["sync-upstream"]
+description = """
+List all open PRs from your fork to upstream.
+
+```bash
+cd ~/gt/{{rig}}/mayor/rig
+
+# Get upstream repo from remote URL (handles both SSH and HTTPS)
+upstream_url=$(git remote get-url upstream)
+upstream_repo=$(echo "$upstream_url" | sed 's/.*github.com[:/]//; s/[.]git$//')
+
+echo "Upstream repo: $upstream_repo"
+
+# List open PRs authored by you
+gh pr list --repo "$upstream_repo" --author @me --state open --json number,headRefName,title
+```
+
+**Example output:**
+```json
+[{"number":123,"headRefName":"feature/xyz","title":"Add feature XYZ"},
+ {"number":124,"headRefName":"fix/bug","title":"Fix bug ABC"}]
+```
+
+**Record** the list of PR branch names to apply in the next step.
+
+**If no PRs found:**
+- Confirm you are the author: `gh auth status`
+- Check PRs exist: `gh pr list --repo "$upstream_repo" --state open`
+- If truly no PRs, skip to the detect-build step — nothing to apply."""
+
+[[steps]]
+id = "apply-prs"
+title = "Apply PR branches to local main"
+needs = ["find-prs"]
+description = """
+Merge each PR branch into the local main.
+
+```bash
+cd ~/gt/{{rig}}/mayor/rig
+
+# Get upstream repo URL for gh commands
+upstream_url=$(git remote get-url upstream)
+upstream_repo=$(echo "$upstream_url" | sed 's/.*github.com[:/]//; s/[.]git$//')
+
+# Get PR branches as a list
+pr_branches=$(gh pr list --repo "$upstream_repo" --author @me --state open --json headRefName --jq '.[].headRefName')
+
+if [ -z "$pr_branches" ]; then
+  echo "No open PRs found, skipping apply step."
+else
+  echo "Applying PR branches: $pr_branches"
+
+  for branch in $pr_branches; do
+    echo "Applying $branch..."
+
+    # Fetch the branch from origin (your fork)
+    git fetch origin "$branch"
+
+    # Merge it into local main
+    if git merge --no-edit "origin/$branch"; then
+      echo "✓ Applied $branch"
+    else
+      echo "✗ Conflict in $branch"
+      git merge --abort
+      echo "  Skipping $branch due to conflicts — resolve manually if needed"
+    fi
+  done
+fi
+```
+
+**Alternative (cherry-pick for linear history):**
+```bash
+# Get commits unique to the branch
+commits=$(git log upstream/main..origin/$branch --format=%H --reverse)
+git cherry-pick $commits
+```
+
+**Gate**: All PR branches applied successfully, or conflicts documented.
+Final state: `git log --oneline upstream/main..HEAD` shows merged commits."""
+
+[[steps]]
+id = "detect-build"
+title = "Detect project build system"
+needs = ["apply-prs"]
+description = """
+Determine how to build the project.
+
+```bash
+cd ~/gt/{{rig}}/mayor/rig
+
+# Check for Go
+if [[ -f go.mod ]]; then
+  echo "BUILD_SYSTEM=go"
+  cat go.mod | head -5
+fi
+
+# Check for Node
+if [[ -f package.json ]]; then
+  echo "BUILD_SYSTEM=node"
+fi
+
+# Check for Rust
+if [[ -f Cargo.toml ]]; then
+  echo "BUILD_SYSTEM=rust"
+fi
+
+# Check for Make
+if [[ -f Makefile ]]; then
+  echo "BUILD_SYSTEM=make"
+fi
+```
+
+**Record** the detected build system for the next step.
+
+Most Gas Town rigs use Go. If `go.mod` exists, proceed with Go build commands."""
+
+[[steps]]
+id = "build-install"
+title = "Build and install"
+needs = ["detect-build"]
+description = """
+Build and install using the detected build system.
+
+**For Go projects (most common):**
+```bash
+cd ~/gt/{{rig}}/mayor/rig
+
+# Build all packages
+go build ./...
+
+# Install binaries to GOPATH/bin
+go install ./...
+
+# Verify installation
+echo "GOPATH/bin: $(go env GOPATH)/bin"
+ls -la "$(go env GOPATH)/bin/"
+```
+
+**For Node projects:**
+```bash
+npm install
+npm run build
+```
+
+**For Rust projects:**
+```bash
+cargo build --release
+cargo install --path .
+```
+
+**For Make projects:**
+```bash
+make
+make install
+```
+
+**Gate**: Build succeeds with no errors. Binary is installed and runnable.
+
+If build fails:
+1. Check for compilation errors and fix
+2. Look for missing dependencies
+3. Verify all PR branches applied cleanly (no partial merges)"""
+
+[[steps]]
+id = "verify-build"
+title = "Verify the build"
+needs = ["build-install"]
+description = """
+Confirm the build includes all PR changes and works correctly.
+
+```bash
+cd ~/gt/{{rig}}/mayor/rig
+
+# Show what's included beyond upstream/main
+echo "Commits applied:"
+git log --oneline upstream/main..HEAD
+
+# Count PRs applied
+pr_count=$(git log --oneline upstream/main..HEAD | wc -l | tr -d ' ')
+echo "PR commits applied: $pr_count"
+
+# For Go: verify binary runs
+if [[ -f go.mod ]]; then
+  # Get module name to find binary
+  module=$(grep '^module' go.mod | awk '{print $2}' | xargs basename)
+  binary_path="$(go env GOPATH)/bin/$module"
+
+  if [[ -f "$binary_path" ]]; then
+    echo "Binary installed: $binary_path"
+    "$binary_path" --version 2>/dev/null || "$binary_path" version 2>/dev/null || echo "(no --version flag)"
+  fi
+
+  # Run short tests if available
+  echo "Running short test suite..."
+  go test ./... -short -timeout 60s 2>&1 | tail -20 || echo "(tests had failures — check output)"
+fi
+```
+
+**Summary to provide:**
+- Number of PRs applied
+- Build status (success/fail)
+- Binary location and version
+- Any test failures
+
+**Gate**: Binary is installed, `git log upstream/main..HEAD` shows applied PRs."""
+
+[vars]
+[vars.rig]
+description = "Rig name (e.g., google_cli). The rig path is ~/gt/<rig>/mayor/rig."
+required = true
