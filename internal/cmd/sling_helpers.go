@@ -747,14 +747,12 @@ func isHookedAgentDead(assignee string) bool {
 // hookBeadWithRetry hooks a bead to a target agent with exponential backoff retry
 // and post-hook verification. This ensures the hook sticks even under Dolt concurrency.
 // Fails fast on configuration/initialization errors (gt-2ra).
-// Set skipVerify=true for ephemeral wisps: bd show filters them out, but bd update
-// succeeds and can be trusted without verification (gt-varxe).
 // See: https://github.com/steveyegge/gastown/issues/148
-func hookBeadWithRetry(beadID, targetAgent, hookDir string, skipVerify bool) error {
+func hookBeadWithRetry(beadID, targetAgent, hookDir string) error {
 	const maxRetries = 10
 	const baseBackoff = 500 * time.Millisecond
 	const maxBackoff = 30 * time.Second
-	skipVerify = skipVerify || os.Getenv("GT_TEST_SKIP_HOOK_VERIFY") != ""
+	skipVerify := os.Getenv("GT_TEST_SKIP_HOOK_VERIFY") != ""
 
 	var lastErr error
 	for attempt := 1; attempt <= maxRetries; attempt++ {

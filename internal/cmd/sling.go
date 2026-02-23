@@ -839,7 +839,7 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 	// Hook the bead with retry and verification.
 	// See: https://github.com/steveyegge/gastown/issues/148
 	hookDir := beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
-	if err := hookBeadWithRetry(beadID, targetAgent, hookDir, false); err != nil {
+	if err := hookBeadWithRetry(beadID, targetAgent, hookDir); err != nil {
 		return err
 	}
 
