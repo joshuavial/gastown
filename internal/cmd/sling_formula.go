@@ -173,7 +173,8 @@ func runSlingFormula(args []string) error {
 	// Step 3: Hook the wisp bead with retry and verification.
 	// See: https://github.com/steveyegge/gastown/issues/148
 	hookDir := beads.ResolveHookDir(townRoot, wispRootID, "")
-	if err := hookBeadWithRetry(wispRootID, targetAgent, hookDir); err != nil {
+	// skipVerify=true: wisps are ephemeral and bd show filters them out (gt-varxe)
+	if err := hookBeadWithRetry(wispRootID, targetAgent, hookDir, true); err != nil {
 		return err
 	}
 	fmt.Printf("%s Attached to hook (status=hooked)\n", style.Bold.Render("✓"))
