@@ -590,7 +590,7 @@ ps -o rss= -p $$   # KB — divide by 1024 for MB
 
 2. **Session age** — how long has this tmux session been running:
 ```bash
-CREATED=$(tmux display-message -t $(tmux display-message -p '#S') -p '#{session_created}')
+CREATED=$(command tmux display-message -t $(command tmux display-message -p '#S') -p '#{session_created}')
 echo "Session age: $(( ($(date +%s) - CREATED) / 3600 ))h"
 ```
 

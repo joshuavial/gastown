@@ -21,6 +21,27 @@ import (
 	"github.com/steveyegge/gastown/internal/telemetry"
 )
 
+// tmuxBinOnce and tmuxBinPath cache the resolved tmux binary path.
+// Used in hook command strings (run-shell) that execute via /bin/sh, which may
+// not have /opt/homebrew/bin in PATH. Resolved once at first use.
+var (
+	tmuxBinOnce sync.Once
+	tmuxBinPath string
+)
+
+// tmuxBin returns the resolved absolute path to the tmux binary.
+// Falls back to bare "tmux" if exec.LookPath fails (e.g. tmux not on PATH).
+func tmuxBin() string {
+	tmuxBinOnce.Do(func() {
+		if path, err := exec.LookPath("tmux"); err == nil {
+			tmuxBinPath = path
+		} else {
+			tmuxBinPath = "tmux"
+		}
+	})
+	return tmuxBinPath
+}
+
 // sessionNudgeLocks serializes nudges to the same session.
 // This prevents interleaving when multiple nudges arrive concurrently,
 // which can cause garbled input and missed Enter keys.
@@ -2391,7 +2412,9 @@ func (t *Tmux) SetAutoRespawnHook(session string) error {
 	// IMPORTANT: respawn-pane automatically resets remain-on-exit to off!
 	// We must re-enable it after each respawn for continuous recovery.
 	// The sleep prevents rapid respawn loops if Claude crashes immediately.
-	hookCmd := fmt.Sprintf(`run-shell "sleep 3 && tmux respawn-pane -k -t '%s' && tmux set-option -t '%s' remain-on-exit on"`, safeSession, safeSession)
+	// Use resolved binary path so /bin/sh can find tmux even if PATH lacks /opt/homebrew/bin.
+	bin := tmuxBin()
+	hookCmd := fmt.Sprintf(`run-shell "sleep 3 && %s respawn-pane -k -t '%s' && %s set-option -t '%s' remain-on-exit on"`, bin, safeSession, bin, safeSession)
 
 	// Set the hook on this specific session
 	_, err := t.run("set-hook", "-t", session, "pane-died", hookCmd)
