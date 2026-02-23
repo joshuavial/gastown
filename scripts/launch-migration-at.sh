@@ -115,7 +115,7 @@ cd "$REPO_ROOT"
 if $BG; then
     SESSION_NAME="migration-hardener-$(date +%H%M)"
     echo -e "${BOLD}Launching in tmux session: ${SESSION_NAME}${NC}"
-    tmux new-session -d -s "$SESSION_NAME" "${LAUNCH_CMD[*]}"
+    command tmux new-session -d -s "$SESSION_NAME" "${LAUNCH_CMD[*]}"
     echo "Attached to: tmux attach -t $SESSION_NAME"
 else
     echo -e "${BOLD}Launching agent...${NC}"

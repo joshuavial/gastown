@@ -11,10 +11,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SESSION_NAME="migration-hardener"
 
 # Kill existing session if any
-tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
+command tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
 
 # Launch claude (skip project hooks — gt prime --hook hangs without GT_ROLE)
-tmux new-session -d -s "$SESSION_NAME" -c "$REPO_ROOT" \
+command tmux new-session -d -s "$SESSION_NAME" -c "$REPO_ROOT" \
     "claude --dangerously-skip-permissions --setting-sources user"
 
 INITIAL_PROMPT="You are a solo migration hardening agent. Read .claude/agents/at-migration-mission.md for your full mission and .claude/agents/migration-hardener.md for your role context. Execute all 5 phases autonomously. Push directly to main. VM access: gcloud compute ssh migration-test-lab --zone=us-west1-b. Start Phase 1 now."
@@ -29,7 +29,7 @@ echo "Waiting for session to initialize..."
 
 for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
     # First check the tmux session still exists (claude may have crashed on startup)
-    if ! tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+    if ! command tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
         echo "ERROR: tmux session '$SESSION_NAME' died before nudge could be delivered"
         exit 1
     fi

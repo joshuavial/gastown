@@ -156,7 +156,7 @@ gt doctor -v
 **2. Check for stragglers:**
 ```bash
 # Tmux sessions
-tmux list-sessions 2>/dev/null
+command tmux list-sessions 2>/dev/null
 
 # Claude processes
 pgrep -f claude
