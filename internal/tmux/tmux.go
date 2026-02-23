@@ -2171,7 +2171,7 @@ func (t *Tmux) SetAutoRespawnHook(session string) error {
 	// IMPORTANT: respawn-pane automatically resets remain-on-exit to off!
 	// We must re-enable it after each respawn for continuous recovery.
 	// The sleep prevents rapid respawn loops if Claude crashes immediately.
-	hookCmd := fmt.Sprintf(`run-shell "sleep 3 && tmux respawn-pane -k -t '%s' && tmux set-option -t '%s' remain-on-exit on"`, safeSession, safeSession)
+	hookCmd := fmt.Sprintf(`run-shell "sleep 3 && command tmux respawn-pane -k -t '%s' && command tmux set-option -t '%s' remain-on-exit on"`, safeSession, safeSession)
 
 	// Set the hook on this specific session
 	_, err := t.run("set-hook", "-t", session, "pane-died", hookCmd)

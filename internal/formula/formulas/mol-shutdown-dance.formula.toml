@@ -143,7 +143,7 @@ The Dog receives a Warrant struct containing:
 
 **2. Validate target exists:**
 ```bash
-tmux has-session -t {target} 2>/dev/null
+command tmux has-session -t {target} 2>/dev/null
 ```
 
 If target doesn't exist:
@@ -178,7 +178,7 @@ Attempt: 1/3
 
 **2. Send via tmux:**
 ```bash
-tmux send-keys -t {target} "{message}" Enter
+command tmux send-keys -t {target} "{message}" Enter
 ```
 
 **3. Open timeout gate:**
@@ -209,7 +209,7 @@ Check if session responded to first interrogation.
 
 **1. Capture tmux output:**
 ```bash
-tmux capture-pane -t {target} -p | tail -50
+command tmux capture-pane -t {target} -p | tail -50
 ```
 
 **2. Check for ALIVE keyword:**
@@ -251,7 +251,7 @@ Attempt: 2/3
 
 **3. Send via tmux:**
 ```bash
-tmux send-keys -t {target} "{message}" Enter
+command tmux send-keys -t {target} "{message}" Enter
 ```
 
 **4. Open timeout gate:**
@@ -274,7 +274,7 @@ Check if session responded to second interrogation.
 
 **1. Capture tmux output:**
 ```bash
-tmux capture-pane -t {target} -p | tail -50
+command tmux capture-pane -t {target} -p | tail -50
 ```
 
 **2. Check for ALIVE keyword.**
@@ -311,7 +311,7 @@ Attempt: 3/3
 
 **3. Send via tmux:**
 ```bash
-tmux send-keys -t {target} "{message}" Enter
+command tmux send-keys -t {target} "{message}" Enter
 ```
 
 **4. Open timeout gate:**
@@ -335,7 +335,7 @@ Final evaluation before execution.
 
 **1. Capture tmux output:**
 ```bash
-tmux capture-pane -t {target} -p | tail -50
+command tmux capture-pane -t {target} -p | tail -50
 ```
 
 **2. Check for ALIVE keyword.**
@@ -401,12 +401,12 @@ state = EXECUTING
 
 **2. Kill the tmux session:**
 ```bash
-tmux kill-session -t {target}
+command tmux kill-session -t {target}
 ```
 
 **3. Verify session is dead:**
 ```bash
-tmux has-session -t {target} 2>/dev/null
+command tmux has-session -t {target} 2>/dev/null
 # Should fail (session gone)
 ```
 

@@ -31,7 +31,7 @@ Polecat has been spawned. Verify it initializes and starts working.
 
 **Check if alive:**
 ```bash
-tmux capture-pane -t gt-{{rig}}-{{polecat}} -p | tail -20
+command tmux capture-pane -t gt-{{rig}}-{{polecat}} -p | tail -20
 ```
 
 Look for:

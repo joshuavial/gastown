@@ -700,7 +700,7 @@ bd list --status=in_progress --json | head -20
 
 For each in_progress issue, check if assignee session exists:
 ```bash
-tmux has-session -t <session> 2>/dev/null && echo "alive" || echo "orphan"
+command tmux has-session -t <session> 2>/dev/null && echo "alive" || echo "orphan"
 ```
 
 **Step 2: If orphans detected, dispatch to dog**
