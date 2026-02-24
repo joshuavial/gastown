@@ -162,17 +162,26 @@ func verifyBeadExists(beadID string) error {
 
 // getBeadInfo returns status and assignee for a bead.
 // Resolves the rig directory from the bead's prefix for correct dolt access.
+// Falls back to bd list --id if bd show fails, to handle ephemeral wisps that
+// some bd versions may filter out of bd show results (gt-varxe).
 func getBeadInfo(beadID string) (*beadInfo, error) {
+	beadDir := resolveBeadDir(beadID)
 	cmd := exec.Command("bd", "show", beadID, "--json", "--allow-stale")
-	cmd.Dir = resolveBeadDir(beadID)
+	cmd.Dir = beadDir
 	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("bead '%s' not found", beadID)
+	if err != nil || len(out) == 0 {
+		// Fallback: bd list --id finds ephemeral wisps that bd show may filter (gt-varxe)
+		listCmd := exec.Command("bd", "list", "--id", beadID, "--json")
+		listCmd.Dir = beadDir
+		out, err = listCmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("bead '%s' not found", beadID)
+		}
+		if len(out) == 0 {
+			return nil, fmt.Errorf("bead '%s' not found", beadID)
+		}
 	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("bead '%s' not found", beadID)
-	}
-	// bd show --json returns an array (issue + dependents), take first element
+	// bd show --json and bd list --json both return arrays; take first element
 	var infos []beadInfo
 	if err := json.Unmarshal(out, &infos); err != nil {
 		return nil, fmt.Errorf("parsing bead info: %w", err)

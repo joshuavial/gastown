@@ -2127,3 +2127,66 @@ func TestSlingPolecatEnvCheck(t *testing.T) {
 		})
 	}
 }
+
+// TestGetBeadInfoFallsBackToListForEphemeralWisps verifies that getBeadInfo falls back to
+// 'bd list --id' when 'bd show' fails (e.g. for ephemeral wisps that some bd versions filter).
+// This is the fix for gt-varxe: hook verification was failing for formula-slung wisps.
+func TestGetBeadInfoFallsBackToListForEphemeralWisps(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor", "rig"), 0755); err != nil {
+		t.Fatalf("mkdir mayor/rig: %v", err)
+	}
+
+	binDir := filepath.Join(townRoot, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("mkdir binDir: %v", err)
+	}
+
+	// bd stub: 'show' fails (simulates ephemeral filtering), 'list --id' succeeds
+	bdScript := `#!/bin/sh
+cmd="$1"
+shift
+if [ "$cmd" = "show" ]; then
+  echo '{"error":"no issues found matching the provided IDs"}'
+  exit 1
+fi
+if [ "$cmd" = "list" ]; then
+  echo '[{"id":"gt-wisp-wisp-abc123","title":"mol-polecat-work","status":"hooked","assignee":"gastown/polecats/nux"}]'
+  exit 0
+fi
+exit 1
+`
+	bdScriptWindows := `@echo off
+if "%1"=="show" (
+  echo {"error":"no issues found matching the provided IDs"}
+  exit /b 1
+)
+if "%1"=="list" (
+  echo [{"id":"gt-wisp-wisp-abc123","title":"mol-polecat-work","status":"hooked","assignee":"gastown/polecats/nux"}]
+  exit /b 0
+)
+exit /b 1
+`
+	_ = writeBDStub(t, binDir, bdScript, bdScriptWindows)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.Chdir(townRoot); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	info, err := getBeadInfo("gt-wisp-wisp-abc123")
+	if err != nil {
+		t.Fatalf("getBeadInfo failed: %v (expected fallback to bd list)", err)
+	}
+	if info.Status != "hooked" {
+		t.Errorf("status = %q, want %q", info.Status, "hooked")
+	}
+	if info.Assignee != "gastown/polecats/nux" {
+		t.Errorf("assignee = %q, want %q", info.Assignee, "gastown/polecats/nux")
+	}
+}
