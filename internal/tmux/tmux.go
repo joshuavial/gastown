@@ -2619,9 +2619,21 @@ func (t *Tmux) GetSessionInfo(name string) (*SessionInfo, error) {
 	return info, nil
 }
 
-// ApplyTheme sets the status bar style for a session.
+// ApplyTheme sets the status bar and window style for a session.
 func (t *Tmux) ApplyTheme(session string, theme Theme) error {
-	_, err := t.run("set-option", "-t", session, "status-style", theme.Style())
+	if _, err := t.run("set-option", "-t", session, "status-style", theme.Style()); err != nil {
+		return err
+	}
+	_, err := t.run("set-window-option", "-t", session, "window-style", theme.Style())
+	return err
+}
+
+// ClearTheme removes Gas Town tmux styling from a session.
+func (t *Tmux) ClearTheme(session string) error {
+	if _, err := t.run("set-option", "-t", session, "-u", "status-style"); err != nil {
+		return err
+	}
+	_, err := t.run("set-window-option", "-t", session, "-u", "window-style")
 	return err
 }
 
@@ -2689,11 +2701,17 @@ func (t *Tmux) SetDynamicStatus(session string) error {
 	return err
 }
 
-// ConfigureGasTownSession applies full Gas Town theming to a session.
-// This is a convenience method that applies theme, status format, and dynamic status.
-func (t *Tmux) ConfigureGasTownSession(session string, theme Theme, rig, worker, role string) error {
-	if err := t.ApplyTheme(session, theme); err != nil {
-		return fmt.Errorf("applying theme: %w", err)
+// ConfigureGasTownSession applies Gas Town status configuration to a session.
+// A nil theme disables tmux styling while still applying status/bindings.
+func (t *Tmux) ConfigureGasTownSession(session string, theme *Theme, rig, worker, role string) error {
+	if theme != nil {
+		if err := t.ApplyTheme(session, *theme); err != nil {
+			return fmt.Errorf("applying theme: %w", err)
+		}
+	} else {
+		if err := t.ClearTheme(session); err != nil {
+			return fmt.Errorf("clearing theme: %w", err)
+		}
 	}
 	if err := t.SetStatusFormat(session, rig, worker, role); err != nil {
 		return fmt.Errorf("setting status format: %w", err)
