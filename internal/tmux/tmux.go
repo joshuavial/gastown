@@ -2575,6 +2575,94 @@ func (t *Tmux) IsIdle(session string) bool {
 	return false
 }
 
+// WaitForIdleAfterClear polls until the agent appears idle after a /clear
+// operation. Unlike WaitForIdle, this includes an initial settle delay to
+// account for the TUI re-render that follows /clear, then confirms idle
+// state with consecutive polls.
+//
+// The settle delay is necessary because /clear completes near-instantly
+// in Claude Code's TUI — the prompt reappears within ~100ms, but the
+// internal state (conversation reset, hooks re-firing) may take longer.
+// Without this delay, a verifier checking IsAtPrompt immediately after
+// /clear would see idle and incorrectly conclude a follow-up nudge was lost.
+func (t *Tmux) WaitForIdleAfterClear(session string, settleDelay, timeout time.Duration) error {
+	// Phase 1: Allow the TUI to settle after /clear.
+	// During this window, the prompt may flash briefly before the clear
+	// completes. We don't poll during settle — just wait.
+	time.Sleep(settleDelay)
+
+	// Phase 2: Standard idle detection with consecutive polls.
+	return t.WaitForIdle(session, timeout)
+}
+
+// VerifyNudgeDelivery checks if a nudge was actually processed by the agent.
+// Sends the nudge, waits for a verification delay, then checks if the agent
+// is still idle. If idle, retries the nudge up to maxRetries times.
+//
+// This is the generalized version of verifyStartupNudgeDelivery that works
+// for any nudge scenario, including post-/clear verification.
+//
+// Returns nil if the agent started processing (not at prompt).
+// Returns ErrNudgeNotDelivered if the agent is still idle after all retries.
+func (t *Tmux) VerifyNudgeDelivery(session, message string, promptPrefix string, verifyDelay time.Duration, maxRetries int) error {
+	if promptPrefix == "" {
+		promptPrefix = DefaultReadyPromptPrefix
+	}
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// Wait for the agent to start processing.
+		time.Sleep(verifyDelay)
+
+		// Check if session is still alive.
+		if _, err := t.HasSession(session); err != nil {
+			return fmt.Errorf("session %s no longer exists: %w", session, err)
+		}
+
+		// Capture pane and check for idle prompt.
+		lines, err := t.CapturePaneLines(session, 10)
+		if err != nil {
+			return fmt.Errorf("capture pane failed: %w", err)
+		}
+
+		// Check status bar for busy indicator first.
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.Contains(trimmed, "⏵⏵") || strings.Contains(trimmed, "\u23F5\u23F5") {
+				if strings.Contains(trimmed, "esc to interrupt") {
+					// Agent is busy — nudge was received.
+					return nil
+				}
+				break
+			}
+		}
+
+		// Check if prompt is visible (agent is idle).
+		atPrompt := false
+		for _, line := range lines {
+			if matchesPromptPrefix(line, promptPrefix) {
+				atPrompt = true
+				break
+			}
+		}
+
+		if !atPrompt {
+			// Agent is not at prompt and not busy — likely processing.
+			return nil
+		}
+
+		// Agent is idle at prompt — nudge was likely lost. Retry.
+		if err := t.NudgeSession(session, message); err != nil {
+			return fmt.Errorf("retry nudge attempt %d failed: %w", attempt, err)
+		}
+	}
+
+	return ErrNudgeNotDelivered
+}
+
+// ErrNudgeNotDelivered is returned when a nudge could not be verified as
+// delivered after all retry attempts.
+var ErrNudgeNotDelivered = errors.New("nudge not delivered: agent still idle after retries")
+
 // GetSessionInfo returns detailed information about a session.
 func (t *Tmux) GetSessionInfo(name string) (*SessionInfo, error) {
 	format := "#{session_name}|#{session_windows}|#{session_created}|#{session_attached}|#{session_activity}|#{session_last_attached}"

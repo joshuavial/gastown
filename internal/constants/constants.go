@@ -70,6 +70,13 @@ const (
 	// while keeping startup fast when no dialog is present.
 	DialogPollTimeout = 8 * time.Second
 
+	// PostClearSettleDelay is the time to wait after /clear before checking
+	// idle state. Claude Code's TUI redraws near-instantly after /clear,
+	// but internal state (hooks, context reset) may take longer. Without
+	// this delay, IsAtPrompt returns true immediately and the verifier
+	// incorrectly concludes the follow-up nudge was lost.
+	PostClearSettleDelay = 1500 * time.Millisecond
+
 	// StartupNudgeVerifyDelay is how long to wait after sending a startup nudge
 	// before checking if the agent started working.
 	// Configurable via operational.session.startup_nudge_verify_delay.
