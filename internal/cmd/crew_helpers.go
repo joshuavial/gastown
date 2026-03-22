@@ -132,6 +132,30 @@ func parseCrewSessionName(sessionName string) (rigName, crewName, prefix string,
 	return identity.Rig, identity.Name, identity.Prefix, true
 }
 
+// resolveRigFromLeadingArg checks if the first arg is a valid rig name when
+// there are additional args following it. This enables "rig name..." as an
+// alternative to "rig/name..." format. The rigFlag (from --rig) takes priority.
+// Returns (resolvedRig, remainingArgs).
+//
+// Rules:
+//   - If rigFlag is set, it wins; all args are crew names.
+//   - If first arg contains "/", skip (slash format handles it per-arg).
+//   - If first arg is a valid rig name AND len(args) >= 2, treat as rig.
+//   - Otherwise, return ("", args) unchanged.
+func resolveRigFromLeadingArg(args []string, rigFlag string) (string, []string) {
+	if rigFlag != "" || len(args) < 2 {
+		return rigFlag, args
+	}
+	first := args[0]
+	if strings.Contains(first, "/") {
+		return "", args
+	}
+	if _, _, err := getRig(first); err == nil {
+		return first, args[1:]
+	}
+	return "", args
+}
+
 // findRigCrewSessions returns all crew sessions for a given rig.
 // Finds sessions matching <prefix>-crew-* pattern.
 // rigPrefix is the rig's beads prefix (e.g., "gt", "bd") — passed directly from

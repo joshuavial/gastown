@@ -69,6 +69,49 @@ func TestParseCrewSessionName_Invalid(t *testing.T) {
 	}
 }
 
+func TestResolveRigFromLeadingArg_FlagTakesPriority(t *testing.T) {
+	// When rigFlag is set, it wins and all args are crew names
+	rig, remaining := resolveRigFromLeadingArg([]string{"beads", "emma"}, "gastown")
+	if rig != "gastown" {
+		t.Errorf("rig = %q, want %q", rig, "gastown")
+	}
+	if len(remaining) != 2 || remaining[0] != "beads" || remaining[1] != "emma" {
+		t.Errorf("remaining = %v, want [beads emma]", remaining)
+	}
+}
+
+func TestResolveRigFromLeadingArg_SingleArg(t *testing.T) {
+	// With only 1 arg, no leading-rig extraction happens
+	rig, remaining := resolveRigFromLeadingArg([]string{"emma"}, "")
+	if rig != "" {
+		t.Errorf("rig = %q, want empty", rig)
+	}
+	if len(remaining) != 1 || remaining[0] != "emma" {
+		t.Errorf("remaining = %v, want [emma]", remaining)
+	}
+}
+
+func TestResolveRigFromLeadingArg_SlashSkipped(t *testing.T) {
+	// If first arg contains "/", don't treat as positional rig
+	rig, remaining := resolveRigFromLeadingArg([]string{"beads/emma", "fred"}, "")
+	if rig != "" {
+		t.Errorf("rig = %q, want empty (slash format should be skipped)", rig)
+	}
+	if len(remaining) != 2 {
+		t.Errorf("remaining = %v, want [beads/emma fred]", remaining)
+	}
+}
+
+func TestResolveRigFromLeadingArg_EmptyArgs(t *testing.T) {
+	rig, remaining := resolveRigFromLeadingArg([]string{}, "")
+	if rig != "" {
+		t.Errorf("rig = %q, want empty", rig)
+	}
+	if len(remaining) != 0 {
+		t.Errorf("remaining = %v, want empty", remaining)
+	}
+}
+
 func containsStr(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || indexStr(s, substr) >= 0)
 }

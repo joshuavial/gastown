@@ -67,6 +67,12 @@ func runCrewAdd(cmd *cobra.Command, args []string) error {
 		rigsConfig = &config.RigsConfig{Rigs: make(map[string]config.RigEntry)}
 	}
 
+	// Support "rig name..." format: gt crew add gastown dave emma
+	if rig, remaining := resolveRigFromLeadingArg(args, crewRig); rig != "" {
+		crewRig = rig
+		args = remaining
+	}
+
 	// Determine base rig from --rig flag or first name's rig/name format
 	baseRig := crewRig
 	if baseRig == "" {

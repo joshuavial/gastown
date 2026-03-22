@@ -31,6 +31,12 @@ type CrewStatusItem struct {
 }
 
 func runCrewStatus(cmd *cobra.Command, args []string) error {
+	// Support "rig name" format: gt crew status gastown dave
+	if rig, remaining := resolveRigFromLeadingArg(args, crewRig); rig != "" {
+		crewRig = rig
+		args = remaining
+	}
+
 	// Parse rig/name format before getting manager (e.g., "beads/emma" -> rig=beads, name=emma)
 	var targetName string
 	if len(args) > 0 {

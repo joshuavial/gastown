@@ -129,10 +129,11 @@ Examples:
   gt crew at dave                 # Attach to dave's session (rig auto-detected)
   gt crew at                      # Auto-detect from cwd
   gt crew at gastown/dave         # Explicit rig/name format
+  gt crew at gastown dave         # Explicit rig name format
   gt crew at dave --reset         # Reset to default branch first
   gt crew at dave --detached      # Start session without attaching
   gt crew at dave --no-tmux       # Just print path`,
-	Args: cobra.MaximumNArgs(1),
+	Args: cobra.MaximumNArgs(2),
 	RunE: runCrewAt,
 }
 
@@ -157,7 +158,8 @@ leave no trace in the ledger).
 Examples:
   gt crew remove dave                       # Remove with safety checks
   gt crew remove dave emma fred             # Remove multiple
-  gt crew remove beads/grip beads/fang      # Remove from specific rig
+  gt crew remove beads grip fang            # Remove from specific rig
+  gt crew remove beads/grip beads/fang      # Same, using slash format
   gt crew remove dave --force               # Force remove (closes bead)
   gt crew remove test-crew --purge          # Obliterate (deletes bead)`,
 	Args: cobra.MinimumNArgs(1),
@@ -174,8 +176,9 @@ The new session reads the handoff mail and resumes work.
 
 Examples:
   gt crew refresh dave                           # Refresh with auto-generated handoff
+  gt crew refresh gastown dave                   # Explicit rig name format
   gt crew refresh dave -m "Working on gt-123"    # Add custom message`,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.RangeArgs(1, 2),
 	RunE: runCrewRefresh,
 }
 
@@ -242,9 +245,10 @@ Kills any running session, renames the directory, and updates state.
 The new session will use the new name (gt-<rig>-crew-<new-name>).
 
 Examples:
-  gt crew rename dave david       # Rename dave to david
-  gt crew rename madmax max       # Rename madmax to max`,
-	Args: cobra.ExactArgs(2),
+  gt crew rename dave david            # Rename dave to david
+  gt crew rename gastown dave david   # Explicit rig name format
+  gt crew rename madmax max           # Rename madmax to max`,
+	Args: cobra.RangeArgs(2, 3),
 	RunE: runCrewRename,
 }
 

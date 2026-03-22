@@ -13,6 +13,12 @@ import (
 )
 
 func runCrewRename(cmd *cobra.Command, args []string) error {
+	// Support "rig old new" format: gt crew rename gastown dave david
+	if rig, remaining := resolveRigFromLeadingArg(args, crewRig); rig != "" {
+		crewRig = rig
+		args = remaining
+	}
+
 	oldName := args[0]
 	newName := args[1]
 	// Parse rig/name format for oldName (e.g., "beads/emma" -> rig=beads, name=emma)
@@ -62,6 +68,12 @@ func runCrewRename(cmd *cobra.Command, args []string) error {
 }
 
 func runCrewPristine(cmd *cobra.Command, args []string) error {
+	// Support "rig name" format: gt crew pristine gastown dave
+	if rig, remaining := resolveRigFromLeadingArg(args, crewRig); rig != "" {
+		crewRig = rig
+		args = remaining
+	}
+
 	crewMgr, r, err := getCrewManager(crewRig)
 	if err != nil {
 		return err

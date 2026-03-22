@@ -29,6 +29,12 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 	// --purge implies --force
 	forceRemove := crewForce || crewPurge
 
+	// Support "rig name..." format: gt crew remove gastown dave emma
+	if rig, remaining := resolveRigFromLeadingArg(args, crewRig); rig != "" {
+		crewRig = rig
+		args = remaining
+	}
+
 	for _, arg := range args {
 		name := arg
 		rigOverride := crewRig
@@ -188,6 +194,12 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 }
 
 func runCrewRefresh(cmd *cobra.Command, args []string) error {
+	// Support "rig name" format: gt crew refresh gastown dave
+	if rig, remaining := resolveRigFromLeadingArg(args, crewRig); rig != "" {
+		crewRig = rig
+		args = remaining
+	}
+
 	name := args[0]
 	// Parse rig/name format (e.g., "beads/emma" -> rig=beads, name=emma)
 	if rig, crewName, ok := parseRigSlashName(name); ok {
@@ -291,6 +303,16 @@ func runCrewStart(cmd *cobra.Command, args []string) error {
 	}
 	// Update rigName in case it was inferred
 	rigName = r.Name
+
+	// Parse rig/name slash format in crew names (e.g., "beads/grip" -> rig=beads, name=grip)
+	for i, name := range crewNames {
+		if rig, crewName, ok := parseRigSlashName(name); ok {
+			if rigName == "" {
+				rigName = rig
+			}
+			crewNames[i] = crewName
+		}
+	}
 
 	// If --all flag OR no crew names specified, get all crew members
 	if crewAll || len(crewNames) == 0 {
@@ -411,6 +433,12 @@ func runCrewRestart(cmd *cobra.Command, args []string) error {
 	// Handle --all flag
 	if crewAll {
 		return runCrewRestartAll()
+	}
+
+	// Support "rig name..." format: gt crew restart gastown dave emma
+	if rig, remaining := resolveRigFromLeadingArg(args, crewRig); rig != "" {
+		crewRig = rig
+		args = remaining
 	}
 
 	var lastErr error
@@ -573,6 +601,12 @@ func runCrewStop(cmd *cobra.Command, args []string) error {
 			return runCrewStopAll()
 		}
 		// Not a rig name - fall through to treat as crew name
+	}
+
+	// Support "rig name..." format: gt crew stop gastown dave emma
+	if rig, remaining := resolveRigFromLeadingArg(args, crewRig); rig != "" {
+		crewRig = rig
+		args = remaining
 	}
 
 	var lastErr error

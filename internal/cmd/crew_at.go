@@ -29,6 +29,12 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 		fmt.Printf("[DEBUG] runCrewAt: args=%v, crewRig=%q, cwd=%q\n", args, crewRig, cwd)
 	}
 
+	// Support "rig name" format: gt crew at gastown dave
+	if rig, remaining := resolveRigFromLeadingArg(args, crewRig); rig != "" {
+		crewRig = rig
+		args = remaining
+	}
+
 	// Determine crew name: from arg, or auto-detect from cwd
 	if len(args) > 0 {
 		name = args[0]
