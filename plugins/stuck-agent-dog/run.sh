@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # stuck-agent-dog/run.sh — Context-aware stuck/crashed agent detection.
 #
-# SCOPE: Only polecats and deacon. NEVER touches crew, mayor, witness, or refinery.
+# SCOPE: Only polecats. NEVER touches crew, mayor, witness, or refinery.
 # The daemon detects; this plugin inspects context before acting.
 
 set -euo pipefail
@@ -86,54 +86,29 @@ done <<< "$RIG_PREFIX_MAP"
 log ""
 log "Polecat health: ${#CRASHED[@]} crashed, ${#STUCK[@]} stuck, $HEALTHY healthy"
 
-# --- Check deacon health -----------------------------------------------------
-
-log ""
-log "=== Deacon Health ==="
-
-DEACON_SESSION="hq-deacon"
+# --- Deacon health check removed (deprecated agent) -------------------------
 DEACON_ISSUE=""
 
-if ! tmux has-session -t "$DEACON_SESSION" 2>/dev/null; then
-  log "  CRASHED: Deacon session is dead"
-  DEACON_ISSUE="crashed"
-else
-  DEACON_PID=$(tmux list-panes -t "$DEACON_SESSION" -F '#{pane_pid}' 2>/dev/null | head -1)
-  DEACON_COMM=$(ps -o comm= -p "$DEACON_PID" 2>/dev/null)
-  if [ -z "$DEACON_COMM" ]; then
-    log "  ZOMBIE: Deacon process dead (pid=$DEACON_PID), session alive"
-    DEACON_ISSUE="zombie"
-  else
-    log "  Process alive: pid=$DEACON_PID comm=$DEACON_COMM"
-  fi
+# --- Dedup helper: skip escalation if unacked escalation exists --------------
 
-  HEARTBEAT_FILE="$TOWN_ROOT/deacon/.deacon-heartbeat"
-  if [ -f "$HEARTBEAT_FILE" ]; then
-    if [ "$(uname)" = "Darwin" ]; then
-      HEARTBEAT_TIME=$(stat -f %m "$HEARTBEAT_FILE" 2>/dev/null)
-    else
-      HEARTBEAT_TIME=$(stat -c %Y "$HEARTBEAT_FILE" 2>/dev/null)
-    fi
-    NOW=$(date +%s)
-    HEARTBEAT_AGE=$(( NOW - HEARTBEAT_TIME ))
-
-    if [ "$HEARTBEAT_AGE" -gt 600 ]; then
-      log "  STUCK: Deacon heartbeat stale (${HEARTBEAT_AGE}s old)"
-      DEACON_ISSUE="stuck_heartbeat_${HEARTBEAT_AGE}s"
-    else
-      log "  OK: Deacon heartbeat ${HEARTBEAT_AGE}s old"
-    fi
-  fi
-fi
+has_unacked_escalation() {
+  local pattern="$1"
+  gt mail inbox --limit 50 2>/dev/null | grep -q "○.*$pattern.*\[escalation\]" && return 0
+  return 1
+}
 
 # --- Mass death check ---------------------------------------------------------
 
 TOTAL_ISSUES=$(( ${#CRASHED[@]} + ${#STUCK[@]} ))
 if [ "$TOTAL_ISSUES" -ge 3 ]; then
-  log ""
-  log "MASS DEATH: $TOTAL_ISSUES agents down — escalating instead of restarting"
-  gt escalate "Mass agent death: $TOTAL_ISSUES agents down" \
-    -s CRITICAL 2>/dev/null || true
+  if ! has_unacked_escalation "Mass agent death"; then
+    log ""
+    log "MASS DEATH: $TOTAL_ISSUES agents down — escalating instead of restarting"
+    gt escalate "Mass agent death: $TOTAL_ISSUES agents down" \
+      -s CRITICAL 2>/dev/null || true
+  else
+    log "MASS DEATH: $TOTAL_ISSUES agents down (escalation already pending, skipping)"
+  fi
 fi
 
 # --- Take action --------------------------------------------------------------
@@ -162,16 +137,9 @@ action: restart requested
 BODY
 done
 
-# Deacon issues: escalate
-if [ -n "$DEACON_ISSUE" ]; then
-  log "Escalating deacon issue: $DEACON_ISSUE"
-  gt escalate "Deacon $DEACON_ISSUE detected by stuck-agent-dog" -s HIGH 2>/dev/null || true
-fi
-
 # --- Report -------------------------------------------------------------------
 
 SUMMARY="Agent health: ${#CRASHED[@]} crashed, ${#STUCK[@]} stuck, $HEALTHY healthy"
-[ -n "$DEACON_ISSUE" ] && SUMMARY="$SUMMARY, deacon=$DEACON_ISSUE"
 log ""
 log "=== $SUMMARY ==="
 
