@@ -3314,42 +3314,16 @@ func sessionPrefixPattern() string {
 // reliably preserve the session context. tmux expands #{session_name} at binding
 // resolution time (when the key is pressed), giving us the correct session.
 func (t *Tmux) SetCycleBindings(session string) error {
-	// Skip if already correctly configured:
-	// 1. Has --client for multi-client support
-	// 2. Has the current prefix pattern (not stale from before a gt rig add)
-	// We must re-bind if an older GT binding exists without --client, or if the
-	// prefix pattern is stale (missing newly added rig prefixes).
-	// See: https://github.com/steveyegge/gastown/issues/2299
-	pattern := sessionPrefixPattern()
-	if t.isGTBindingWithClient("prefix", "n") && t.isGTBindingCurrent("prefix", "n", pattern) {
-		return nil
-	}
-	ifShell := fmt.Sprintf("echo '#{session_name}' | grep -Eq '%s'", pattern)
-
-	// Capture existing bindings before overwriting, falling back to tmux defaults
-	nextFallback := t.getKeyBinding("prefix", "n")
-	if nextFallback == "" {
-		nextFallback = "next-window"
-	}
-	prevFallback := t.getKeyBinding("prefix", "p")
-	if prevFallback == "" {
-		prevFallback = "previous-window"
-	}
-
-	// C-b n → gt cycle next for Gas Town sessions, original binding otherwise
-	// Pass --client #{client_tty} so switch-client targets the correct client
-	// when multiple tmux clients are attached (e.g., gastown + beads rigs).
+	// Use gt-cycle shell script for fast session cycling (~10ms vs ~5s for gt cycle).
+	// gt-cycle splits on the last hyphen to find the session group prefix,
+	// so it works for any session naming convention without a prefix registry.
+	// Falls back gracefully (no-op) for sessions with no siblings.
 	if _, err := t.run("bind-key", "-T", "prefix", "n",
-		"if-shell", ifShell,
-		"run-shell 'gt cycle next --session #{session_name} --client #{client_tty}'",
-		nextFallback); err != nil {
+		"run-shell", "gt-cycle next #{session_name}"); err != nil {
 		return err
 	}
-	// C-b p → gt cycle prev for Gas Town sessions, original binding otherwise
 	if _, err := t.run("bind-key", "-T", "prefix", "p",
-		"if-shell", ifShell,
-		"run-shell 'gt cycle prev --session #{session_name} --client #{client_tty}'",
-		prevFallback); err != nil {
+		"run-shell", "gt-cycle prev #{session_name}"); err != nil {
 		return err
 	}
 	return nil
